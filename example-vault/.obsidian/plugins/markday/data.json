@@ -1,0 +1,162 @@
+{
+  "language": "en",
+  "headingLevel": 2,
+  "headingText": "Tasks",
+  "recurrences": [
+    {
+      "id": "zarya",
+      "raw": "08:00 Morning exercise #health !med",
+      "freq": "daily",
+      "interval": 1,
+      "start": "2026-06-01",
+      "end": null
+    },
+    {
+      "id": "chytan",
+      "raw": "Read 30 min #growth",
+      "freq": "daily",
+      "interval": 1,
+      "start": "2026-06-01",
+      "end": null
+    },
+    {
+      "id": "standup",
+      "raw": "10:00-10:15 Standup #work @project-alpha !high",
+      "freq": "weekly",
+      "interval": 1,
+      "weekdays": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "start": "2026-06-01",
+      "end": null
+    },
+    {
+      "id": "prybyr",
+      "raw": "Clean the apartment #home @chores",
+      "freq": "weekly",
+      "interval": 1,
+      "weekdays": [
+        5
+      ],
+      "start": "2026-06-01",
+      "end": null
+    },
+    {
+      "id": "zvit",
+      "raw": "Monthly report #work @project-alpha !urgent",
+      "freq": "monthly",
+      "interval": 1,
+      "monthday": 1,
+      "start": "2026-06-01",
+      "end": null
+    }
+  ],
+  "habits": [
+    {
+      "id": "h_read",
+      "name": "Reading",
+      "property": "pages_read",
+      "unit": "pages",
+      "type": "number",
+      "emoji": "📖",
+      "color": "#c084fc"
+    },
+    {
+      "id": "h_water",
+      "name": "Water",
+      "property": "water_glasses",
+      "unit": "glasses",
+      "type": "number",
+      "emoji": "💧",
+      "color": "#58a6ff"
+    },
+    {
+      "id": "h_med",
+      "name": "Meditation",
+      "property": "meditation",
+      "unit": "",
+      "type": "bool",
+      "emoji": "🧘",
+      "color": "#57d9a3"
+    },
+    {
+      "id": "h_sport",
+      "name": "Workout",
+      "property": "workout",
+      "unit": "",
+      "type": "bool",
+      "emoji": "🏋️",
+      "color": "#f59e0b"
+    }
+  ],
+  "workStart": 8,
+  "workEnd": 20,
+  "snapMinutes": 15,
+  "colorBy": "priority",
+  "priorityDot": false,
+  "firstDayOfWeek": 1,
+  "showTags": false,
+  "showGroups": false,
+  "showPriority": false,
+  "defaultTag": "",
+  "defaultGroup": "",
+  "defaultPriority": "",
+  "wordCount": {
+    "enabled": true,
+    "name": "Words written",
+    "emoji": "✍️",
+    "color": "#9aa0a6"
+  },
+  "colors": {
+    "priorities": [
+      {
+        "key": "low",
+        "color": "#8b949e"
+      },
+      {
+        "key": "med",
+        "color": "#58a6ff"
+      },
+      {
+        "key": "high",
+        "color": "#d29922"
+      },
+      {
+        "key": "urgent",
+        "color": "#e5534b"
+      }
+    ],
+    "tags": [
+      {
+        "name": "work",
+        "color": "#4c9aff"
+      },
+      {
+        "name": "health",
+        "color": "#57d9a3"
+      },
+      {
+        "name": "growth",
+        "color": "#c084fc"
+      },
+      {
+        "name": "home",
+        "color": "#f78fb3"
+      }
+    ],
+    "groups": [
+      {
+        "name": "project-alpha",
+        "color": "#f59e0b"
+      },
+      {
+        "name": "chores",
+        "color": "#9aa0a6"
+      }
+    ]
+  }
+}

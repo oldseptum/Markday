@@ -1,0 +1,274 @@
+{
+  "main": {
+    "id": "61db0299b37f3627",
+    "type": "split",
+    "children": [
+      {
+        "id": "d711630229c87744",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "483c1ee40ef295f4",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "2026-06-28.md",
+                "mode": "preview",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "2026-06-28"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "ab0eb7791cb064c1",
+    "type": "split",
+    "children": [
+      {
+        "id": "388d03e741d81cb8",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "5998b612215d2988",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "a10d9ba50dd4c523",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "24559c2073529c75",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 311.5,
+    "collapsed": true
+  },
+  "right": {
+    "id": "1e4fb457d746e692",
+    "type": "split",
+    "children": [
+      {
+        "id": "c757e972b4d63afe",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "c877e076912a688e",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks"
+            }
+          },
+          {
+            "id": "eb690b13845895b3",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links"
+            }
+          },
+          {
+            "id": "9a5003cf51a342f5",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "a95ec05ccba234e2",
+            "type": "leaf",
+            "state": {
+              "type": "md-task-calendar-habits",
+              "state": {},
+              "icon": "check-circle",
+              "title": "Habits"
+            }
+          },
+          {
+            "id": "dcc909ef1fbeb5b4",
+            "type": "leaf",
+            "state": {
+              "type": "md-task-calendar-list",
+              "state": {},
+              "icon": "list-checks",
+              "title": "Tasks"
+            }
+          },
+          {
+            "id": "cfb7b7d72f77970f",
+            "type": "leaf",
+            "state": {
+              "type": "md-task-calendar-smart",
+              "state": {},
+              "icon": "list-todo",
+              "title": "Smart list"
+            }
+          }
+        ],
+        "currentTab": 5
+      }
+    ],
+    "direction": "horizontal",
+    "width": 462.5
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false,
+      "md-task-calendar:MD Task Calendar — Календар": false,
+      "md-task-calendar:MD Task Calendar — Список": false,
+      "md-task-calendar:MD Task Calendar — Звички": false,
+      "md-task-calendar:MD Task Calendar — Міні-календар": false,
+      "md-task-calendar:MD Task Calendar — Розумний список": false,
+      "md-task-calendar:MD Task Calendar — Smart list": false,
+      "md-task-calendar:MD Task Calendar — Calendar": false,
+      "md-task-calendar:MD Task Calendar — Tasks": false,
+      "md-task-calendar:MD Task Calendar — Habits": false,
+      "md-task-calendar:MD Task Calendar — Mini calendar": false,
+      "markday:Markday — Smart list": false,
+      "markday:Markday — Calendar": false,
+      "markday:Markday — Tasks": false,
+      "markday:Markday — Habits": false,
+      "markday:Markday — Mini calendar": false
+    }
+  },
+  "floating": {
+    "id": "36b4d471124134f1",
+    "type": "floating",
+    "children": [
+      {
+        "id": "f97038a5972e780a",
+        "type": "window",
+        "children": [
+          {
+            "id": "b969c431b9e384ab",
+            "type": "tabs",
+            "children": [
+              {
+                "id": "51b288a888b34542",
+                "type": "leaf",
+                "state": {
+                  "type": "md-task-calendar-cal",
+                  "state": {},
+                  "icon": "calendar",
+                  "title": "Calendar"
+                }
+              }
+            ]
+          }
+        ],
+        "direction": "vertical",
+        "x": 420,
+        "y": 118,
+        "width": 911,
+        "height": 926,
+        "maximize": false,
+        "zoom": 0
+      }
+    ]
+  },
+  "active": "51b288a888b34542",
+  "lastOpenFiles": [
+    "2026-06-08.md",
+    "2026-06-28.md",
+    "2026-06-29.md",
+    "2026-06-18.md",
+    "2026-06-12.md",
+    "2026-06-09.md",
+    "2026-06-16.md",
+    "2026-06-23.md",
+    "2026-06-26.md",
+    "2026-06-19.md",
+    "2026-06-22.md",
+    "2026-06-24.md",
+    "2026-06-15.md",
+    "2026-06-10.md",
+    "2026-06-22.md.tmp.20604.fe6d567023da",
+    "2026-06-21.md.tmp.20604.1178be53bbee",
+    "2026-06-19.md.tmp.20604.825ff35623e6",
+    "2026-06-18.md.tmp.20604.31d7598abd35",
+    "2026-06-15.md.tmp.20604.1920169155da",
+    "2026-06-14.md.tmp.20604.3d9f20d8f3d4",
+    "2026-06-10.md.tmp.20604.f51c390aeeea",
+    "2026-07-05.md.tmp.20604.d37a6726ca9c",
+    "2026-06-29.md.tmp.20604.a69240d992e6",
+    "2026-06-28.md.tmp.20604.3874cf7e7acd",
+    "2026-06-17.md",
+    "2026-07-05.md",
+    "2026-07-01.md",
+    "2026-06-30.md",
+    "2026-06-27.md",
+    "2026-06-13.md",
+    "2026-06-21.md",
+    "2026-06-20.md",
+    "2026-06-25.md",
+    "2026-06-11.md",
+    "2026-06-14.md"
+  ]
+}
