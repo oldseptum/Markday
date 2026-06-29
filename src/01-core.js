@@ -135,7 +135,21 @@ const I18N = {
     'Звичок ще немає. Створіть їх через Ctrl+P → Звичка.': 'No habits yet. Create them via Ctrl+P → Habit.',
     'Найдовша серія': 'Longest streak', 'днів підряд': 'days in a row', 'Рекорд за день': 'Best day',
     'За місяць': 'This month', 'За рік': 'This year', 'разів': 'times', 'звичок': 'habits', 'слів': 'words', 'сторінки': 'pages',
-    'Скільки': 'How much', 'Виконано': 'Done',
+    'Скільки': 'How much', 'Виконано': 'Done', 'Не виконано': 'Not done', 'Скасовано': 'Cancelled', 'Статус': 'Status', 'Активна': 'Active', 'Виконана': 'Done', 'Скасована': 'Cancelled',
+    'Не виконана': 'Not done', 'Відмінена': 'Cancelled', 'Опис': 'Description', 'Опис, теги #, групи @…': 'Description, tags #, groups @…',
+    'Без повтору': 'No repeat', 'Щоденно': 'Daily', 'Щотижнево (поточний день)': 'Weekly (this weekday)', 'Щотижнево у робочі дні (Пн–Пт)': 'Weekly (Mon–Fri)',
+    'Щомісячно (поточне число)': 'Monthly (this day)', 'Щорічно (поточний день)': 'Yearly (this day)', 'Кастомне налаштування…': 'Custom…',
+    'Завтра': 'Tomorrow', 'Наступного понеділка': 'Next Monday', 'Дата та час': 'Date & time', 'Очистити': 'Clear',
+    'Одиниця': 'Unit', 'Інтервал': 'Interval', 'День': 'Day', 'Тиждень': 'Week', 'Місяць': 'Month', 'Рік': 'Year',
+    'За днем місяця': 'By day of month', 'За днем тижня': 'By weekday', 'Робочий день': 'Working day', 'Режим': 'Mode', 'Який': 'Which', 'Число місяця': 'Day of month',
+    'перший': 'first', 'другий': 'second', 'третій': 'third', 'четвертий': 'fourth', 'останній': 'last',
+    'Кастомне повторення': 'Custom recurrence', 'Дата виконання': 'Due date', 'Пріоритет: ': 'Priority: ', 'Повторення: ': 'Repeat: ',
+    'Щомісячні перевірки': 'Monthly checks', 'Загальна реєстрація': 'Total log', 'Щомісячна ставка реєстрації': 'Monthly rate',
+    'Поточна серія': 'Current streak', 'Щомісячне виконання': 'Monthly total', 'Загальний обсяг виконання': 'Overall total',
+    'Рахунок': 'Count', 'Ціль на день': 'Daily goal', 'Журнал звички': 'Habit log', 'Найкраща серія': 'Best streak', '← Назад': '← Back',
+    'Немає записів': 'No entries', 'Оберіть звичку': 'Select a habit', 'Необов’язково — для кілець прогресу та %': 'Optional — for progress rings & %', 'дн.': 'd', 'Нова звичка': 'New habit', 'До поточного': 'To current', 'Ціль': 'Goal',
+    'Без дати': 'No date', 'Ще': 'More', 'Відкрити нотатку': 'Open note', 'Не буде виконано': 'Won’t do', 'без групи': 'no group',
+    'Додати тег у опис': 'Add a tag in the description', 'Редагувати регулярну задачу': 'Edit recurring task', 'Зробити регулярною': 'Make recurring',
     // editor / create
     'Назва задачі': 'Task name', 'Опис (деталі)…': 'Description (details)…', 'Задача виконана': 'Task done',
     'Час (необов.)': 'Time (optional)', 'Група': 'Group', 'Enter — додати': 'Enter to add', 'Підзадачі': 'Subtasks',
@@ -239,6 +253,52 @@ function genId() { return Math.random().toString(36).slice(2, 8); }
 // ─── Recurrence engine ───────────────────────────────────────────────────────
 
 // Does a recurrence rule fire on the given Date?
+function lastDayOfMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
+function clampMonthDay(y, m, d) { return Math.min(d, lastDayOfMonth(y, m)); }
+
+// nth occurrence of a weekday (0=Mon..6=Sun) in month; nth=-1 → last. Returns day-of-month or null.
+function nthWeekdayOfMonth(y, m, wd0Mon, nth) {
+    if (nth === -1) {
+        for (let d = lastDayOfMonth(y, m); d >= 1; d--) {
+            if ((new Date(y, m, d).getDay() + 6) % 7 === wd0Mon) return d;
+        }
+        return null;
+    }
+    let count = 0;
+    for (let d = 1; d <= lastDayOfMonth(y, m); d++) {
+        if ((new Date(y, m, d).getDay() + 6) % 7 === wd0Mon && ++count === nth) return d;
+    }
+    return null;
+}
+
+// first/last working day (Mon–Fri) of a month → day-of-month
+function workdayOfMonth(y, m, which) {
+    if (which === 'last') {
+        for (let d = lastDayOfMonth(y, m); d >= 1; d--) {
+            if ((new Date(y, m, d).getDay() + 6) % 7 <= 4) return d;
+        }
+    } else {
+        for (let d = 1; d <= lastDayOfMonth(y, m); d++) {
+            if ((new Date(y, m, d).getDay() + 6) % 7 <= 4) return d;
+        }
+    }
+    return null;
+}
+
+// Does `date` match the rule's month-mode within month (y,m)? (shared by monthly + yearly)
+function matchesMonthMode(rule, date, y, m, fallbackDay) {
+    const mode = rule.monthMode || 'day';
+    if (mode === 'weekday') {
+        const day = nthWeekdayOfMonth(y, m, rule.weekday || 0, rule.nth || 1);
+        return day != null && date.getDate() === day;
+    }
+    if (mode === 'workday') {
+        const day = workdayOfMonth(y, m, rule.which || 'first');
+        return day != null && date.getDate() === day;
+    }
+    return date.getDate() === clampMonthDay(y, m, rule.monthday || fallbackDay);
+}
+
 function occursOn(rule, date) {
     const start = parseISO(rule.start);
     if (daysBetween(start, date) < 0) return false;
@@ -257,16 +317,19 @@ function occursOn(rule, date) {
             return weeks % interval === 0;
         }
         case 'monthly': {
-            const md = rule.monthday || start.getDate();
-            if (date.getDate() !== md) return false;
             const months = (date.getFullYear() - start.getFullYear()) * 12
                 + (date.getMonth() - start.getMonth());
-            return months >= 0 && months % interval === 0;
+            if (months < 0 || months % interval !== 0) return false;
+            return matchesMonthMode(rule, date, date.getFullYear(), date.getMonth(), start.getDate());
         }
         case 'yearly': {
-            if (date.getDate() !== start.getDate() || date.getMonth() !== start.getMonth()) return false;
+            const ym = (rule.month != null) ? rule.month : start.getMonth();
+            if (date.getMonth() !== ym) return false;
             const years = date.getFullYear() - start.getFullYear();
-            return years >= 0 && years % interval === 0;
+            if (years < 0 || years % interval !== 0) return false;
+            // legacy rules (no monthMode) keep exact start day-of-month
+            if (!rule.monthMode) return date.getDate() === start.getDate();
+            return matchesMonthMode(rule, date, date.getFullYear(), ym, start.getDate());
         }
     }
     return false;
@@ -274,14 +337,29 @@ function occursOn(rule, date) {
 
 function describeRule(rule) {
     const i = rule.interval || 1;
-    const ev = n => LANG === 'en' ? `every ${i} ${n}` : `кожні ${i} ${n}`;
-    if (rule.freq === 'daily') return i === 1 ? t('щодня') : ev(LANG === 'en' ? 'days' : 'дн.');
+    const en = LANG === 'en';
+    const ev = n => en ? `every ${i} ${n}` : `кожні ${i} ${n}`;
+    const ord = { '1': en ? 'first' : 'перший', '2': en ? 'second' : 'другий', '3': en ? 'third' : 'третій',
+                  '4': en ? 'fourth' : 'четвертий', '-1': en ? 'last' : 'останній' };
+    const monthModePart = () => {
+        const mode = rule.monthMode || 'day';
+        if (mode === 'weekday') return `${ord[String(rule.nth || 1)]} ${WD_FULL[rule.weekday || 0]}`;
+        if (mode === 'workday') return rule.which === 'last'
+            ? (en ? 'last working day' : 'останній робочий день')
+            : (en ? 'first working day' : 'перший робочий день');
+        return en ? `day ${rule.monthday || '?'}` : `${rule.monthday || '?'} числа`;
+    };
+    if (rule.freq === 'daily') return i === 1 ? t('щодня') : ev(en ? 'days' : 'дн.');
     if (rule.freq === 'weekly') {
-        const wd = (rule.weekdays || []).slice().sort().map(d => WD_UA[d]).join(', ');
-        return (i === 1 ? t('щотижня') : ev(LANG === 'en' ? 'weeks' : 'тиж.')) + (wd ? ` (${wd})` : '');
+        const wd = (rule.weekdays || []).slice().sort((a, b) => a - b).map(d => WD_UA[d]).join(', ');
+        return (i === 1 ? t('щотижня') : ev(en ? 'weeks' : 'тиж.')) + (wd ? ` (${wd})` : '');
     }
-    if (rule.freq === 'monthly') return (i === 1 ? t('щомісяця') : ev(LANG === 'en' ? 'months' : 'міс.')) + (LANG === 'en' ? `, day ${rule.monthday || '?'}` : ` ${rule.monthday || '?'} числа`);
-    if (rule.freq === 'yearly') return i === 1 ? t('щороку') : ev(LANG === 'en' ? 'years' : 'р.');
+    if (rule.freq === 'monthly') return (i === 1 ? t('щомісяця') : ev(en ? 'months' : 'міс.')) + ', ' + monthModePart();
+    if (rule.freq === 'yearly') {
+        const base = i === 1 ? t('щороку') : ev(en ? 'years' : 'р.');
+        if (rule.month == null) return base;
+        return `${base} — ${monthModePart()} ${MONTHS_GEN[rule.month]}`;
+    }
     return '';
 }
 
@@ -358,7 +436,7 @@ function habitList(settings) {
     const arr = (settings.habits || []).slice();
     const wc = settings.wordCount;
     if (wc && wc.enabled) {
-        arr.push({ id: '__words', name: wc.name || 'Написано слів', emoji: wc.emoji || '✍️', color: wc.color || '', unit: 'слів', type: 'number', auto: 'words' });
+        arr.push({ id: '__words', name: wc.name || 'Написано слів', emoji: wc.emoji || '✍️', color: wc.color || '', unit: 'слів', type: 'number', auto: 'words', goal: wc.goal || null });
     }
     return arr;
 }
@@ -373,6 +451,19 @@ async function getHabitValue(app, isoDate, habit) {
     const v = readFrontmatter(app, isoDate)[habit.property];
     if (habit.type === 'bool') return (v === true || v === 'true') ? 1 : 0;
     return Number(v) || 0;
+}
+
+// A day's completion fraction (0..1) for a habit
+function habitProgress(value, habit) {
+    if (habit.type === 'bool') return value > 0 ? 1 : 0;
+    if (habit.goal > 0) return Math.max(0, Math.min(1, value / habit.goal));
+    return value > 0 ? 1 : 0;
+}
+// Whether a day counts as "done" (goal met, or any value when no goal)
+function habitDone(value, habit) {
+    if (habit.type === 'bool') return value > 0;
+    if (habit.goal > 0) return value >= habit.goal;
+    return value > 0;
 }
 
 // ─── Daily Notes integration ─────────────────────────────────────────────────

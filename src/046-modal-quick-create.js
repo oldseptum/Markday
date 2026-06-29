@@ -2,8 +2,12 @@
 
 function newComposerDraft(date) {
     return { text: '', date: date || todayISO(), start: null, end: null, priority: null, tags: [], group: null,
-             rec: { freq: 'none', interval: 1, weekdays: [] }, _tagChips: null, _groupChips: null };
+             status: 'todo', descText: '',
+             rec: { freq: 'none', interval: 1, weekdays: [], monthMode: 'day', monthday: '', nth: 1, weekday: 0, which: 'first', month: new Date().getMonth() },
+             _tagChips: null, _groupChips: null };
 }
+
+function nextMonday() { const d = new Date(); return addDays(d, 7 - ((d.getDay() + 6) % 7)); }
 
 function composeTaskRaw(d) {
     const parts = [];
@@ -22,17 +26,30 @@ function syncDraftChips(d) {
 
 async function createFromDraft(app, plugin, d) {
     syncDraftChips(d);
+    // sweep any #tag / @group tokens typed straight into the description into chips
+    if (d.descText) {
+        d.descText = d.descText.replace(/(^|\s)([#@])([^\s#@]+)/g, (m, pre, sig, val) => {
+            if (sig === '#') { if (!d.tags.includes(val)) d.tags.push(val); }
+            else { d.group = val; }
+            return pre;
+        }).replace(/[ \t]{2,}/g, ' ').trim();
+    }
     const raw = composeTaskRaw(d);
     if (!raw.trim()) return;
     if (d.rec && d.rec.freq && d.rec.freq !== 'none') {
-        const rule = { id: genId(), raw, freq: d.rec.freq, interval: Math.max(1, Number(d.rec.interval) || 1), start: d.date || todayISO(), end: null };
-        if (d.rec.freq === 'weekly') rule.weekdays = d.rec.weekdays.length ? d.rec.weekdays.slice() : [(parseISO(rule.start).getDay() + 6) % 7];
-        if (d.rec.freq === 'monthly') rule.monthday = parseISO(rule.start).getDate();
+        const start = d.date || todayISO();
+        const rule = Object.assign({ id: genId(), raw, start, end: null }, ruleFromRecDraft(d.rec));
+        if ((rule.freq === 'monthly' || rule.freq === 'yearly') && rule.monthMode === 'day' && !rule.monthday)
+            rule.monthday = parseISO(start).getDate();
         plugin.settings.recurrences.push(rule);
         await plugin.saveSettings();
     } else {
         const file = await getOrCreateDateFile(app, d.date || todayISO());
-        await addTask(app, file, raw, plugin.settings);
+        const mark = statusMark(d.status || 'todo');
+        const lineNum = await insertLineUnderHeading(app, file, `- [${mark}] ${applyDefaults(raw, plugin.settings)}`, plugin.settings);
+        if (d.descText && d.descText.trim() && lineNum != null) {
+            await setDescription(app, file, { line: lineNum, text: d.text, descId: null }, d.descText, plugin.settings);
+        }
     }
 }
 
@@ -135,7 +152,127 @@ function renderFab(app, plugin, container, date) {
     fab.onclick = () => new TaskCreateModal(app, plugin, date).open();
 }
 
-// Full create modal (Ctrl+P "Створити задачу" + mobile FAB) — task with optional recurrence
+// Inline #tag / @group autocomplete on a textarea. Calls onPick(sig, value) when a token
+// is committed (the token text is first stripped from the textarea). Shared by the create
+// modal's smart description and the task editor.
+function attachInlineTagAutocomplete(ta, tags, groups, onPick) {
+    let sug = null, items = [], active = -1, token = null;
+    const close = () => { if (sug) sug.remove(); sug = null; items = []; active = -1; token = null; };
+    const commit = val => {
+        if (!token || !val) { close(); return; }
+        const sig = token.sig;
+        ta.value = (ta.value.slice(0, token.start) + ta.value.slice(token.end)).replace(/[ \t]{2,}/g, ' ');
+        ta.selectionStart = ta.selectionEnd = token.start;
+        close();
+        onPick(sig, val);
+        ta.focus();
+    };
+    const render = () => {
+        if (sug) sug.remove();
+        sug = document.body.createEl('div', { cls: 'tc-suggest' });
+        items.forEach((it, i) => {
+            const row = sug.createEl('div', { cls: i === active ? 'tc-suggest-item is-active' : 'tc-suggest-item' });
+            row.setText(token.sig + it);
+            row.onmousedown = e => { e.preventDefault(); commit(it); };
+        });
+        const r = ta.getBoundingClientRect();
+        sug.style.left = `${r.left}px`; sug.style.top = `${r.bottom + 2}px`; sug.style.minWidth = `${Math.min(r.width, 280)}px`;
+    };
+    const update = () => {
+        const m = ta.value.slice(0, ta.selectionStart).match(/([#@])([^\s#@]*)$/);
+        if (!m) { close(); return; }
+        token = { sig: m[1], start: ta.selectionStart - m[0].length, end: ta.selectionStart };
+        items = (m[1] === '#' ? tags : groups).filter(x => x.toLowerCase().includes(m[2].toLowerCase())).slice(0, 8);
+        active = items.length ? 0 : -1;
+        if (items.length) render(); else close();
+    };
+    ta.addEventListener('input', update);
+    ta.addEventListener('keydown', e => {
+        if (sug && items.length) {
+            if (e.key === 'ArrowDown') { e.preventDefault(); active = (active + 1) % items.length; render(); return; }
+            if (e.key === 'ArrowUp') { e.preventDefault(); active = (active - 1 + items.length) % items.length; render(); return; }
+            if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); commit(items[active]); return; }
+            if (e.key === 'Escape') { close(); return; }
+        }
+        if (e.key === ' ' && token) { const frag = ta.value.slice(token.start + 1, ta.selectionStart); if (frag) { e.preventDefault(); commit(frag); } }
+    });
+    ta.addEventListener('blur', () => setTimeout(close, 150));
+}
+
+// Description textarea with inline #tag / @group autocomplete; picks become chips below.
+function buildSmartDescription(container, d, tags, groups) {
+    const wrap = container.createEl('div', { cls: 'tc-smartdesc' });
+    const ta = wrap.createEl('textarea', { cls: 'tc-editor-desc tc-smartdesc-input' });
+    ta.rows = 4;
+    ta.placeholder = t('Опис, теги #, групи @…');
+    ta.value = d.descText || '';
+
+    const chipsWrap = wrap.createEl('div', { cls: 'tc-chips tc-smartdesc-chips' });
+    const drawChips = () => {
+        chipsWrap.empty();
+        const make = (val, kind) => {
+            const chip = chipsWrap.createEl('span', { cls: kind === 'group' ? 'tc-chip tc-chip-group' : 'tc-chip' });
+            chip.createSpan({ text: (kind === 'group' ? '@' : '#') + val });
+            chip.createEl('span', { text: '✕', cls: 'tc-chip-x' }).onclick = () => {
+                if (kind === 'group') d.group = null; else d.tags = d.tags.filter(x => x !== val);
+                drawChips();
+            };
+        };
+        d.tags.forEach(tg => make(tg, 'tag'));
+        if (d.group) make(d.group, 'group');
+        chipsWrap.toggleClass('tc-empty', !d.tags.length && !d.group);
+    };
+    drawChips();
+    ta.addEventListener('input', () => d.descText = ta.value);
+    attachInlineTagAutocomplete(ta, tags, groups, (sig, val) => {
+        if (sig === '#') { if (!d.tags.includes(val)) d.tags.push(val); } else d.group = val;
+        d.descText = ta.value; drawChips();
+    });
+}
+
+// Date / time picker with quick buttons (Today / Tomorrow / Next Monday)
+class DatePickerModal extends obsidian.Modal {
+    constructor(app, d, onDone) { super(app); this.d = d; this.onDone = onDone; }
+    onOpen() {
+        const { contentEl } = this;
+        contentEl.addClass('tc-editor');
+        contentEl.createEl('h3', { text: t('Дата та час') });
+        new obsidian.Setting(contentEl).setName(t('Дата'))
+            .addText(c => { c.inputEl.type = 'date'; c.setValue(this.d.date || todayISO()).onChange(v => this.d.date = v); });
+        new obsidian.Setting(contentEl).setName(t('Час'))
+            .addText(c => c.setPlaceholder('09:00').setValue(this.d.start || '').onChange(v => this.d.start = v.trim() || null))
+            .addText(c => c.setPlaceholder('10:30').setValue(this.d.end || '').onChange(v => this.d.end = v.trim() || null));
+        const done = () => { this.close(); if (this.onDone) this.onDone(); };
+        const quick = contentEl.createEl('div', { cls: 'tc-quick-dates' });
+        const pick = iso => { this.d.date = iso; done(); };
+        quick.createEl('button', { text: t('Сьогодні') }).onclick = () => pick(todayISO());
+        quick.createEl('button', { text: t('Завтра') }).onclick = () => pick(toISO(addDays(new Date(), 1)));
+        quick.createEl('button', { text: t('Наступного понеділка') }).onclick = () => pick(toISO(nextMonday()));
+        const footer = contentEl.createEl('div', { cls: 'tc-modal-btns' });
+        footer.createEl('button', { text: t('Очистити') }).onclick = () => { this.d.start = null; this.d.end = null; done(); };
+        footer.createEl('button', { text: t('Готово'), cls: 'mod-cta' }).onclick = done;
+    }
+    onClose() { this.contentEl.empty(); }
+}
+
+// Custom recurrence builder (wraps the shared schedule form, no raw/dates)
+class RecurrenceCustomModal extends obsidian.Modal {
+    constructor(app, rec, onDone) { super(app); this.rec = rec; this.onDone = onDone; if (this.rec.freq === 'none') this.rec.freq = 'daily'; }
+    onOpen() {
+        const { contentEl } = this;
+        contentEl.addClass('tc-editor');
+        contentEl.createEl('h3', { text: t('Кастомне повторення') });
+        const form = contentEl.createEl('div');
+        const r = () => { form.empty(); buildRecurrenceFields(form, this.rec, r, { hideRaw: true, hideDates: true }); };
+        r();
+        const footer = contentEl.createEl('div', { cls: 'tc-modal-btns' });
+        footer.createEl('button', { text: t('Скасувати') }).onclick = () => this.close();
+        footer.createEl('button', { text: t('Готово'), cls: 'mod-cta' }).onclick = () => { this.close(); if (this.onDone) this.onDone(); };
+    }
+    onClose() { this.contentEl.empty(); }
+}
+
+// Full create modal (Ctrl+P "Створити задачу" + mobile FAB) — title, smart description, quick-param row
 class TaskCreateModal extends obsidian.Modal {
     constructor(app, plugin, date) { super(app); this.plugin = plugin; this.d = newComposerDraft(date || todayISO()); }
     async onOpen() {
@@ -147,6 +284,7 @@ class TaskCreateModal extends obsidian.Modal {
         const { contentEl } = this;
         contentEl.empty();
         contentEl.addClass('tc-editor', 'tc-create');
+
         const name = contentEl.createEl('input', { cls: 'tc-title-input' });
         name.placeholder = t('Назва задачі');
         name.value = this.d.text;
@@ -154,13 +292,65 @@ class TaskCreateModal extends obsidian.Modal {
         name.addEventListener('keydown', e => { if (e.key === 'Enter') this.submit(); });
         setTimeout(() => name.focus(), 0);
 
-        const body = contentEl.createEl('div');
-        const r = () => { syncDraftChips(this.d); body.empty(); buildScheduleFields(body, this.d, r); buildAttrFields(body, this.d, this.tags, this.groups); };
-        r();
+        buildSmartDescription(contentEl, this.d, this.tags, this.groups);
+
+        const row = contentEl.createEl('div', { cls: 'tc-quick-row' });
+        const summary = contentEl.createEl('div', { cls: 'tc-quick-summary' });
+        let statusBtn, prioBtn;
+        const updateLabels = () => {
+            const parts = [];
+            if (this.d.date) parts.push('📅 ' + humanDate(this.d.date) + (this.d.start ? ' ' + this.d.start : ''));
+            if (this.d.rec && this.d.rec.freq && this.d.rec.freq !== 'none') parts.push('↻ ' + describeRule(ruleFromRecDraft(this.d.rec)));
+            summary.setText(parts.join('   ·   '));
+            // status icon reflects todo / done / cancelled
+            obsidian.setIcon(statusBtn, this.d.status === 'done' ? 'check-circle' : this.d.status === 'cancelled' ? 'x-circle' : 'circle');
+            statusBtn.style.color = this.d.status === 'done' ? 'var(--color-green)' : this.d.status === 'cancelled' ? 'var(--color-red)' : '';
+            statusBtn.toggleClass('is-set', this.d.status !== 'todo');
+            // priority icon reflects the selected priority colour
+            prioBtn.style.color = this.d.priority ? prioColor(this.d.priority) : '';
+            prioBtn.toggleClass('is-set', !!this.d.priority);
+        };
+        const iconBtn = (icon, label, handler) => {
+            const b = row.createEl('button', { cls: 'clickable-icon' });
+            obsidian.setIcon(b, icon);
+            b.setAttribute('aria-label', label);
+            b.onclick = handler;
+            return b;
+        };
+
+        statusBtn = iconBtn('circle', t('Статус'), e => {
+            const menu = new obsidian.Menu();
+            [['todo', t('Не виконана')], ['done', t('Виконана')], ['cancelled', t('Відмінена')]].forEach(o =>
+                menu.addItem(it => it.setTitle(o[1]).setChecked(this.d.status === o[0]).onClick(() => { this.d.status = o[0]; updateLabels(); })));
+            menu.showAtMouseEvent(e);
+        });
+        prioBtn = iconBtn('alert-circle', t('Пріоритет'), e => {
+            const menu = new obsidian.Menu();
+            menu.addItem(it => it.setTitle('—').setChecked(!this.d.priority).onClick(() => { this.d.priority = null; updateLabels(); }));
+            priorityKeys.forEach(k => menu.addItem(it => it.setTitle(k).setChecked(this.d.priority === k).onClick(() => { this.d.priority = k; updateLabels(); })));
+            menu.showAtMouseEvent(e);
+        });
+        iconBtn('calendar', t('Дата виконання'), () => new DatePickerModal(this.app, this.d, updateLabels).open());
+        iconBtn('repeat', t('Повторення'), e => {
+            const menu = new obsidian.Menu();
+            const base = parseISO(this.d.date || todayISO());
+            const setRec = rec => { Object.assign(this.d.rec, rec); updateLabels(); };
+            menu.addItem(it => it.setTitle(t('Без повтору')).onClick(() => setRec({ freq: 'none' })));
+            menu.addItem(it => it.setTitle(t('Щоденно')).onClick(() => setRec({ freq: 'daily', interval: 1 })));
+            menu.addItem(it => it.setTitle(t('Щотижнево (поточний день)')).onClick(() => setRec({ freq: 'weekly', interval: 1, weekdays: [(base.getDay() + 6) % 7] })));
+            menu.addItem(it => it.setTitle(t('Щотижнево у робочі дні (Пн–Пт)')).onClick(() => setRec({ freq: 'weekly', interval: 1, weekdays: [0, 1, 2, 3, 4] })));
+            menu.addItem(it => it.setTitle(t('Щомісячно (поточне число)')).onClick(() => setRec({ freq: 'monthly', interval: 1, monthMode: 'day', monthday: base.getDate() })));
+            menu.addItem(it => it.setTitle(t('Щорічно (поточний день)')).onClick(() => setRec({ freq: 'yearly', interval: 1, month: base.getMonth(), monthMode: 'day', monthday: base.getDate() })));
+            menu.addSeparator();
+            menu.addItem(it => it.setTitle(t('Кастомне налаштування…')).onClick(() => new RecurrenceCustomModal(this.app, this.d.rec, updateLabels).open()));
+            menu.showAtMouseEvent(e);
+        });
+
+        updateLabels();
 
         const footer = contentEl.createEl('div', { cls: 'tc-modal-btns' });
         footer.createEl('button', { text: t('Скасувати') }).onclick = () => this.close();
-        footer.createEl('button', { text: t('Створити'), cls: 'mod-cta' }).onclick = () => this.submit();
+        footer.createEl('button', { text: t('Зберегти'), cls: 'mod-cta' }).onclick = () => this.submit();
     }
     async submit() {
         this.d.text = (this.contentEl.querySelector('.tc-title-input').value || '').trim();

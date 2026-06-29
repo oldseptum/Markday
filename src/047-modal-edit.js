@@ -42,7 +42,7 @@ class HabitEditModal extends obsidian.Modal {
         this.plugin = plugin;
         this.habit = habit;
         this.onSave = onSave;
-        this.draft = { name: habit.name, property: habit.property, unit: habit.unit || '', type: habit.type, emoji: habit.emoji || '', color: habit.color || '#9aa0a6' };
+        this.draft = { name: habit.name, property: habit.property, unit: habit.unit || '', type: habit.type, emoji: habit.emoji || '', color: habit.color || '#9aa0a6', goal: habit.goal || '' };
     }
     onOpen() {
         const { contentEl } = this;

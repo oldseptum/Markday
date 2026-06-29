@@ -240,10 +240,11 @@ class CalendarView extends obsidian.ItemView {
                     entry.tasks.slice().sort(dayOrder).forEach(t => {
                         const bar = items.createEl('div', { cls: 'tc-bar' });
                         if (t.done) bar.addClass('tc-bar-done');
+                        if (t.cancelled) bar.addClass('tc-bar-cancelled');
                         if (t.virtual) bar.addClass('tc-virtual');
                         applyCardColor(bar, t, s.colorBy, s.priorityDot);
                         if (!mobile) {
-                            const cbx = makeCheckbox(bar, t.done, async checked => {
+                            const cbx = makeStatusCheckbox(bar, t, async checked => {
                                 if (t.virtual) await materializeVirtual(this.app, t, checked, s);
                                 else if (t.subtasks && t.subtasks.length) await toggleTaskCascade(this.app, t.file, t, checked);
                                 else await toggleTask(this.app, t.file, t.line, checked);

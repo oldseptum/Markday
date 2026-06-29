@@ -1,84 +1,16 @@
-// ─── Task Editor Modal ───────────────────────────────────────────────────────
+// ─── Task Editor Modal (4-layer card; saves live, no Save/Cancel buttons) ──────
 
 class TaskEditorModal extends obsidian.Modal {
     constructor(app, task, onClose) {
         super(app);
         this.file = task.file;
-        this.line = task.line;       // parent line is stable for the modal's lifetime
+        this.line = task.line;       // stays valid within a file for the modal's lifetime
+        this.date = task.date;       // current day (for the date picker + cross-day move)
         this.task = task;
         this.onCloseCb = onClose;
         this.deleted = false;
-    }
-
-    async reload() {
-        const content = await this.app.vault.read(this.file);
-        const found = parseTasks(content).find(t => t.line === this.line);
-        this.task = found ? { ...found, file: this.file } : null;
-    }
-
-    onOpen() { this.renderAll(); }
-
-    async renderAll() {
-        await this.reload();
-        if (!this.task) { this.close(); return; }
-
-        const tags = collectTags(this.app);
-        const groups = await collectGroups(this.app, this.plugin ? this.plugin.settings : { colors: { groups: [] } });
-
-        const { contentEl } = this;
-        contentEl.empty();
-        contentEl.addClass('tc-editor');
-
-        // editable title (replaces the "Edit task" heading)
-        const titleInput = contentEl.createEl('input', { cls: 'tc-title-input' });
-        titleInput.placeholder = t('Назва задачі');
-        titleInput.value = this.task.text || '';
-        this.titleInput = titleInput;
-
-        // description directly under the title — fixed size, no resize
-        const descArea = contentEl.createEl('textarea', { cls: 'tc-editor-desc' });
-        descArea.rows = 4;
-        descArea.placeholder = t('Опис (деталі)…');
-        descArea.value = this.task.desc || '';
-        this.descInput = descArea;
-
-        new obsidian.Setting(contentEl).setName(t('Задача виконана'))
-            .addToggle(tg => { this.doneToggle = tg; tg.setValue(!!this.task.done); });
-
-        new obsidian.Setting(contentEl).setName(t('Пріоритет'))
-            .addDropdown(dd => {
-                this.prioSel = dd;
-                dd.addOption('', '—');
-                priorityKeys.forEach(k => dd.addOption(k, k));
-                dd.setValue(this.task.priority || '');
-            });
-
-        new obsidian.Setting(contentEl).setName(t('Час (необов.)'))
-            .addText(c => { this.startInput = c.inputEl; c.setPlaceholder('09:00').setValue(this.task.start || ''); })
-            .addText(c => { this.endInput = c.inputEl; c.setPlaceholder('10:30').setValue(this.task.end || ''); });
-
-        new obsidian.Setting(contentEl).setName(t('Група')).setDesc(t('Enter — додати'))
-            .then(s => { this.groupChips = buildChips(s.controlEl, this.task.group ? [this.task.group] : [], groups, true, t('група')); });
-
-        new obsidian.Setting(contentEl).setName(t('Теги')).setDesc(t('Enter — додати'))
-            .then(s => { this.tagChips = buildChips(s.controlEl, this.task.tags || [], tags, false, t('+ тег')); });
-
-        this.subWrap = contentEl.createEl('div');
-        this.renderSubtasks();
-
-        const footer = contentEl.createEl('div', { cls: 'tc-editor-footer' });
-        const trash = footer.createEl('button', { cls: 'clickable-icon tc-btn-danger' });
-        obsidian.setIcon(trash, 'trash');
-        trash.setAttribute('aria-label', 'Видалити задачу');
-        trash.onclick = async () => {
-            await removeTaskBlock(this.app, this.file, this.task);
-            this.deleted = true;
-            this.close();
-        };
-
-        const right = footer.createEl('div', { cls: 'tc-modal-btns' });
-        right.createEl('button', { text: t('Відхилити зміни') }).onclick = () => this.close();
-        right.createEl('button', { text: t('Зберегти зміни'), cls: 'mod-cta' }).onclick = async () => { await this.applyFields(); this.close(); };
+        this._lineSave = obsidian.debounce(() => this.applyLine(), 400, false);
+        this._descSave = obsidian.debounce(() => this.saveDescription(), 500, false);
     }
 
     get plugin() {
@@ -86,9 +18,189 @@ class TaskEditorModal extends obsidian.Modal {
             || { settings: DEFAULT_SETTINGS };
     }
 
+    async reload() {
+        const content = await this.app.vault.read(this.file);
+        const found = parseTasks(content).find(t => t.line === this.line);
+        this.task = found ? { ...found, file: this.file, date: this.date } : null;
+    }
+
+    onOpen() {
+        // close only via Esc: hide the × button and ignore clicks on the dimmed backdrop
+        this.modalEl.addClass('tc-noclose');
+        const container = this.modalEl.closest('.modal-container');
+        if (container) for (const ev of ['mousedown', 'click']) container.addEventListener(ev, e => { if (!this.modalEl.contains(e.target)) e.stopImmediatePropagation(); }, true);
+        this.renderAll();
+    }
+
+    // ── live persistence ─────────────────────────────────────────────────────
+    async applyLine() { if (!this.deleted && this.task) await rewriteTaskLine(this.app, this.file, this.line, this.task); }
+    async saveDescription() { if (!this.deleted && this.task && this.descInput) await setDescription(this.app, this.file, this.task, this.descInput.value, this.plugin.settings); }
+    async setStatus(status) {
+        this.task.done = status === 'done';
+        this.task.cancelled = status === 'cancelled';
+        await this.applyLine();
+        this.renderAll();
+    }
+
+    dateLabel() {
+        const time = this.task.start ? ' · ' + (this.task.end ? `${this.task.start}–${this.task.end}` : this.task.start) : '';
+        return (this.date ? humanDate(this.date) : t('Без дати')) + time;
+    }
+
+    openDatePicker() {
+        const draft = { date: this.date, start: this.task.start, end: this.task.end };
+        const apply = async () => {
+            if (draft.date && draft.date !== this.date) {
+                const loc = await moveTaskToDay(this.app, this.task, draft.date, draft.start || null, draft.end || null, this.plugin.settings);
+                this.file = loc.file; this.line = loc.line; this.date = draft.date;
+            } else {
+                this.task.start = draft.start || null;
+                this.task.end = (this.task.start && draft.end) ? draft.end : null;
+                await this.applyLine();
+            }
+            this.renderAll();
+        };
+        new DatePickerModal(this.app, draft, apply).open();
+    }
+
+    async renderAll() {
+        await this.reload();
+        if (!this.task) { this.close(); return; }
+        const tags = collectTags(this.app);
+        const groups = await collectGroups(this.app, this.plugin.settings);
+        this._groups = groups;
+
+        const { contentEl } = this;
+        contentEl.empty();
+        contentEl.addClass('tc-editor', 'tc-task-edit');
+
+        // ── Layer 1: status checkbox · date/time · priority ──────────────────
+        const l1 = contentEl.createEl('div', { cls: 'tc-te-l1' });
+        const cb = makeStatusCheckbox(l1, this.task, checked => this.setStatus(checked ? 'done' : 'todo'), 'tc-te-check');
+        cb.addEventListener('contextmenu', e => {
+            e.preventDefault();
+            const menu = new obsidian.Menu();
+            menu.addItem(it => it.setTitle(this.task.done ? t('Не виконано') : t('Виконано')).onClick(() => this.setStatus(this.task.done ? 'todo' : 'done')));
+            menu.addItem(it => it.setTitle(t('Не буде виконано')).setChecked(!!this.task.cancelled).onClick(() => this.setStatus(this.task.cancelled ? 'todo' : 'cancelled')));
+            menu.showAtMouseEvent(e);
+        });
+
+        const dateBtn = l1.createEl('button', { cls: 'tc-te-date' });
+        const dic = dateBtn.createEl('span', { cls: 'tc-te-date-ic' }); obsidian.setIcon(dic, 'calendar');
+        dateBtn.createEl('span', { cls: 'tc-te-date-txt', text: this.dateLabel() });
+        dateBtn.onclick = () => this.openDatePicker();
+
+        const prio = l1.createEl('button', { cls: 'tc-te-prio clickable-icon' });
+        obsidian.setIcon(prio, 'alert-circle');
+        prio.setAttribute('aria-label', t('Пріоритет'));
+        if (this.task.priority) { prio.addClass('is-set'); prio.style.color = prioColor(this.task.priority); }
+        prio.onclick = e => {
+            const menu = new obsidian.Menu();
+            menu.addItem(it => it.setTitle('—').setChecked(!this.task.priority).onClick(async () => { this.task.priority = null; await this.applyLine(); this.renderAll(); }));
+            priorityKeys.forEach(k => menu.addItem(it => it.setTitle(k).setChecked(this.task.priority === k).onClick(async () => { this.task.priority = k; await this.applyLine(); this.renderAll(); })));
+            menu.showAtMouseEvent(e);
+        };
+
+        // ── Layer 2: editable title ──────────────────────────────────────────
+        const titleInput = contentEl.createEl('input', { cls: 'tc-title-input tc-te-title' });
+        titleInput.placeholder = t('Назва задачі');
+        titleInput.value = this.task.text || '';
+        titleInput.addEventListener('input', () => { this.task.text = titleInput.value; this._lineSave(); });
+        titleInput.addEventListener('blur', () => { this.task.text = titleInput.value.trim(); this.applyLine(); });
+
+        // ── Layer 3: description (smart #/@) · subtasks · tag chips ───────────
+        const l3 = contentEl.createEl('div', { cls: 'tc-te-l3' });
+        const ta = l3.createEl('textarea', { cls: 'tc-editor-desc' });
+        ta.rows = 4;
+        ta.placeholder = t('Опис, теги #, групи @…');
+        ta.value = this.task.desc || '';
+        this.descInput = ta;
+        ta.addEventListener('input', () => this._descSave());
+        ta.addEventListener('blur', () => this.saveDescription());
+        attachInlineTagAutocomplete(ta, tags, groups, (sig, val) => {
+            if (sig === '#') { if (!this.task.tags.includes(val)) this.task.tags.push(val); this.drawTagChips(); }
+            else { this.task.group = val; this.renderGroupBadge(); }
+            this.applyLine();
+        });
+
+        this.subWrap = l3.createEl('div', { cls: 'tc-te-subs' });
+        this.renderSubtasks();
+
+        this.tagChipsEl = l3.createEl('div', { cls: 'tc-chips tc-te-tags' });
+        this.drawTagChips();
+
+        // ── Layer 4: group badge · more menu ─────────────────────────────────
+        const l4 = contentEl.createEl('div', { cls: 'tc-te-l4' });
+        this.groupSlot = l4.createEl('div', { cls: 'tc-te-groupslot' });
+        this.renderGroupBadge();
+        const more = l4.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(more, 'more-horizontal');
+        more.setAttribute('aria-label', t('Ще'));
+        more.onclick = e => this.moreMenu(e);
+    }
+
+    drawTagChips() {
+        this.tagChipsEl.empty();
+        for (const tg of (this.task.tags || [])) {
+            const chip = this.tagChipsEl.createEl('span', { cls: 'tc-chip' });
+            chip.createSpan({ text: '#' + tg });
+            const col = COLORS.tags[tg]; if (col) tintBadge(chip, col);
+            chip.createEl('span', { text: '✕', cls: 'tc-chip-x' }).onclick = () => { this.task.tags = this.task.tags.filter(x => x !== tg); this.applyLine(); this.drawTagChips(); };
+        }
+        const add = this.tagChipsEl.createEl('span', { cls: 'tc-chip tc-chip-add', text: '+' });
+        add.setAttribute('aria-label', t('Додати тег у опис'));
+        add.onclick = () => { this.descInput.focus(); };
+    }
+
+    renderGroupBadge() {
+        this.groupSlot.empty();
+        const badge = this.groupSlot.createEl('button', { cls: this.task.group ? 'tc-te-group' : 'tc-te-group tc-te-nogroup' });
+        badge.setText(this.task.group ? '@' + this.task.group : t('без групи'));
+        if (this.task.group) tintBadge(badge, COLORS.groups[this.task.group] || autoColor(this.task.group));
+        badge.onclick = e => {
+            const menu = new obsidian.Menu();
+            menu.addItem(it => it.setTitle(t('без групи')).setChecked(!this.task.group).onClick(async () => { this.task.group = null; await this.applyLine(); this.renderGroupBadge(); }));
+            for (const g of (this._groups || [])) menu.addItem(it => it.setTitle('@' + g).setChecked(this.task.group === g).onClick(async () => { this.task.group = g; await this.applyLine(); this.renderGroupBadge(); }));
+            menu.showAtMouseEvent(e);
+        };
+    }
+
+    moreMenu(e) {
+        const menu = new obsidian.Menu();
+        menu.addItem(it => it.setTitle(t('Відкрити нотатку')).setIcon('file-text').onClick(() => { openDay(this.app, this.date); this.close(); }));
+        if (this.task.recId) {
+            menu.addItem(it => it.setTitle(t('Редагувати регулярну задачу')).setIcon('repeat').onClick(() => {
+                const rule = (this.plugin.settings.recurrences || []).find(r => r.id === this.task.recId);
+                if (rule) new RecurrenceEditModal(this.app, this.plugin, rule, () => this.plugin.refreshViews && this.plugin.refreshViews()).open();
+            }));
+        } else {
+            menu.addItem(it => it.setTitle(t('Зробити регулярною')).setIcon('repeat').onClick(() => this.convertToRecurring()));
+        }
+        menu.addSeparator();
+        menu.addItem(it => it.setTitle(t('Видалити')).setIcon('trash').onClick(async () => {
+            await removeTaskBlock(this.app, this.file, this.task);
+            this.deleted = true;
+            this.close();
+        }));
+        menu.showAtMouseEvent(e);
+    }
+
+    convertToRecurring() {
+        const rec = { freq: 'daily', interval: 1, weekdays: [], monthMode: 'day', monthday: '', nth: 1, weekday: 0, which: 'first', month: new Date().getMonth() };
+        new RecurrenceCustomModal(this.app, rec, async () => {
+            const start = this.date || todayISO();
+            const rule = Object.assign({ id: genId(), raw: serializeTaskBody(this.task), start, end: null }, ruleFromRecDraft(rec));
+            if ((rule.freq === 'monthly' || rule.freq === 'yearly') && rule.monthMode === 'day' && !rule.monthday) rule.monthday = parseISO(start).getDate();
+            this.plugin.settings.recurrences.push(rule);
+            await this.plugin.saveSettings();
+            await removeTaskBlock(this.app, this.file, this.task);   // one-off line removed; now shows as a virtual recurrence
+            this.deleted = true;
+            if (this.plugin.refreshViews) this.plugin.refreshViews();
+            this.close();
+        }).open();
+    }
+
     renderSubtasks() {
         this.subWrap.empty();
-        this.subWrap.createEl('h4', { text: t('Підзадачі') });
         for (const s of this.task.subtasks) {
             const r = this.subWrap.createEl('div', { cls: 'tc-subrow' });
             makeCheckbox(r, s.done, async checked => {
@@ -114,24 +226,15 @@ class TaskEditorModal extends obsidian.Modal {
         });
     }
 
-    async applyFields() {
-        if (this.deleted || !this.task) return;
-        const settings = this.plugin.settings;
-        this.task.text = this.titleInput.value.trim();
-        this.task.done = this.doneToggle.getValue();
-        this.task.priority = this.prioSel.getValue() || null;
-        const s = this.startInput.value.trim();
-        const e = this.endInput.value.trim();
-        this.task.start = s || null;
-        this.task.end = (this.task.start && e) ? e : null;
-        this.task.group = this.groupChips.get()[0] || null;
-        this.task.tags = this.tagChips.get();
-        await setDescription(this.app, this.file, this.task, this.descInput.value, settings);
-        await rewriteTaskLine(this.app, this.file, this.line, this.task);
-    }
-
     onClose() {
+        const text = this.descInput ? this.descInput.value : null;
         this.contentEl.empty();
-        if (this.onCloseCb) this.onCloseCb();
+        (async () => {
+            if (!this.deleted && this.task) {
+                await this.applyLine();
+                if (text != null) await setDescription(this.app, this.file, this.task, text, this.plugin.settings);
+            }
+            if (this.onCloseCb) this.onCloseCb();
+        })();
     }
 }

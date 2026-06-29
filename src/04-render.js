@@ -9,6 +9,16 @@ function makeCheckbox(parent, checked, onChange, cls) {
     return input;
 }
 
+// Checkbox that renders an ✕ for cancelled tasks ([-]) instead of a check/dash
+function makeStatusCheckbox(parent, task, onChange, cls) {
+    if (task.cancelled) {
+        const box = parent.createEl('span', { cls: cls ? `tc-xbox ${cls}` : 'tc-xbox', text: '✕' });
+        box.addEventListener('click', e => { e.stopPropagation(); onChange(true); });
+        return box;
+    }
+    return makeCheckbox(parent, task.done, onChange, cls);
+}
+
 function tintBadge(el, color) {
     if (!color) return;
     el.style.background = color;
@@ -54,16 +64,32 @@ function renderTaskRow(app, container, task, refresh, opts = {}) {
     if (task.start) row.addClass('tc-event');
     if (task.virtual) row.addClass('tc-virtual');
     if (task.done) row.addClass('tc-row-done');
+    if (task.cancelled) row.addClass('tc-cancelled');
 
     const subs = task.subtasks || [];
 
-    const cb = makeCheckbox(row, task.done, async checked => {
+    const cb = makeStatusCheckbox(row, task, async checked => {
         if (task.virtual) await materializeVirtual(app, task, checked, s);
         else if (subs.length) await toggleTaskCascade(app, task.file, task, checked);
         else await toggleTask(app, task.file, task.line, checked);
         await refresh();
     }, 'tc-cb');
     cb.onclick = e => e.stopPropagation();
+
+    // right-click → set status (real tasks only)
+    if (!task.virtual && task.file) {
+        row.addEventListener('contextmenu', e => {
+            e.preventDefault();
+            const menu = new obsidian.Menu();
+            menu.addItem(i => i.setTitle(t('Виконано')).setChecked(!!task.done)
+                .onClick(async () => { await setTaskStatus(app, task.file, task.line, 'done'); await refresh(); }));
+            menu.addItem(i => i.setTitle(t('Скасовано')).setChecked(!!task.cancelled)
+                .onClick(async () => { await setTaskStatus(app, task.file, task.line, 'cancelled'); await refresh(); }));
+            menu.addItem(i => i.setTitle(t('Не виконано')).setChecked(!task.done && !task.cancelled)
+                .onClick(async () => { await setTaskStatus(app, task.file, task.line, 'todo'); await refresh(); }));
+            menu.showAtMouseEvent(e);
+        });
+    }
 
     const main = row.createEl('div', { cls: 'tc-row-main' });
     const top = main.createEl('div', { cls: 'tc-row-top' });

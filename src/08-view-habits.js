@@ -1,4 +1,8 @@
-// ─── Habits View (weekly tracker + heatmap statistics) ────────────────────────
+// ─── Habits View (two-pane dashboard: list + selected-habit detail) ───────────
+
+// Pane width (px) below which the two-pane dashboard collapses to a single column
+// (left list, tap a habit → detail screen). Raise it to hide the detail pane sooner.
+const HABITS_2PANE_MIN = 860;
 
 function heatLevel(value, max) {
     if (value <= 0 || max <= 0) return 0;
@@ -9,246 +13,363 @@ function heatColor(base, lvl) {
     return `color-mix(in srgb, ${base} ${6 + lvl * 22}%, var(--background-secondary))`;
 }
 
+// Read a habit's value out of a (cached) frontmatter object — fully synchronous.
+function fmHabitValue(fm, habit) {
+    const v = fm ? fm[habit.property] : undefined;
+    if (habit.type === 'bool') return (v === true || v === 'true') ? 1 : 0;
+    return Number(v) || 0;
+}
+
+// SVG progress ring with an optional centered label. Returns the wrapper element.
+function makeRing(parent, frac, color, opts) {
+    opts = opts || {};
+    const size = opts.size || 28, sw = opts.stroke || 3;
+    const r = (size - sw) / 2, circ = 2 * Math.PI * r, ns = 'http://www.w3.org/2000/svg';
+    const wrap = parent.createEl('div', { cls: 'tc-ring-wrap' });
+    wrap.style.width = wrap.style.height = size + 'px';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', `0 0 ${size} ${size}`);
+    svg.classList.add('tc-ring');
+    const circle = (stroke, dashFrac) => {
+        const ci = document.createElementNS(ns, 'circle');
+        ci.setAttribute('cx', size / 2); ci.setAttribute('cy', size / 2); ci.setAttribute('r', r);
+        ci.setAttribute('fill', 'none'); ci.setAttribute('stroke', stroke); ci.setAttribute('stroke-width', sw);
+        if (dashFrac != null) {
+            ci.setAttribute('stroke-dasharray', circ);
+            ci.setAttribute('stroke-dashoffset', circ * (1 - dashFrac));
+            ci.setAttribute('stroke-linecap', 'round');
+            ci.setAttribute('transform', `rotate(-90 ${size / 2} ${size / 2})`);
+        }
+        svg.appendChild(ci);
+    };
+    circle('var(--background-modifier-border)');
+    if (frac > 0) circle(color || 'var(--interactive-accent)', Math.min(1, frac));
+    wrap.appendChild(svg);
+    if (opts.center != null) wrap.createEl('span', { cls: 'tc-ring-center', text: String(opts.center) });
+    if (frac >= 1) wrap.addClass('tc-ring-full');
+    return wrap;
+}
+
 class HabitsView extends obsidian.ItemView {
     constructor(leaf, plugin) {
         super(leaf);
         this.plugin = plugin;
-        this.anchor = new Date();          // week shown in the tracker grid
-        this.heatHabit = 'all';            // 'all' | habit id
-        this.heatPeriod = 'month';         // 'month' | 'year'
-        this.heatAnchor = new Date();
+        this.anchor = new Date();          // single focus date driving week / month / year
+        this.selectedHabit = null;
+        this.mobileDetail = false;         // narrow: list (false) vs detail screen (true)
     }
 
     getViewType() { return HABITS_VIEW; }
     getDisplayText() { return t('Звички'); }
     getIcon() { return 'check-circle'; }
 
-    async onOpen() { await this.refresh(); }
-    onResize() { const c = compactMode(this); if (c !== this._lastCompact) this.refresh(); }
-    shiftWeek(dir) { this.anchor = addDays(this.anchor, dir * 7); this.refresh(); }
+    async onOpen() {
+        // Re-render when habit values change. Writes (setHabitValue) update metadataCache
+        // ASYNCHRONOUSLY, so we refresh on its 'changed' event (not right after the write)
+        // to avoid reading stale frontmatter. Debounced to collapse bursts and avoid flicker.
+        this._scheduleRefresh = obsidian.debounce(() => this.refresh(), 200, true);
+        const isDaily = file => { const c = getDailyNotesConfig(this.app); return !!(file && fileToDate(file, c.folder, c.format)); };
+        this.registerEvent(this.app.metadataCache.on('changed', file => { if (isDaily(file)) this._scheduleRefresh(); }));
+        this.registerEvent(this.app.vault.on('create', () => this._scheduleRefresh()));
+        this.registerEvent(this.app.vault.on('delete', () => this._scheduleRefresh()));
+        this.registerEvent(this.app.vault.on('rename', () => this._scheduleRefresh()));
+        await this.refresh();
+    }
+    isNarrow() {
+        const w = (this.containerEl.children[1] && this.containerEl.children[1].clientWidth) || 0;
+        return obsidian.Platform.isMobile || w < HABITS_2PANE_MIN;
+    }
+    onResize() { const n = this.isNarrow(); if (n !== this._narrow) this.refresh(); }
+
+    // value lookup backed by the per-refresh caches (synchronous)
+    val(iso, habit) { return habit.auto === 'words' ? (this._words.get(iso) || 0) : fmHabitValue(this._fm.get(iso), habit); }
+
+    // ── synchronized period navigation (all driven by this.anchor) ───────────
+    weekStep(dir) { this.anchor = addDays(this.anchor, dir * 7); this.refresh(); }
+    monthStep(dir) {
+        const a = this.anchor, nm = new Date(a.getFullYear(), a.getMonth() + dir, 1);
+        this.anchor = new Date(nm.getFullYear(), nm.getMonth(), Math.min(a.getDate(), lastDayOfMonth(nm.getFullYear(), nm.getMonth())));
+        this.refresh();
+    }
+    yearStep(dir) {
+        const ty = this.anchor.getFullYear() + dir, cy = new Date().getFullYear();
+        if (ty < cy) this.anchor = new Date(ty, 11, 31);       // past year → last month + last week
+        else if (ty === cy) this.anchor = new Date();          // current year → today
+        else this.anchor = new Date(ty, 0, 1);                 // future → start
+        this.refresh();
+    }
+    // ◀ [label → today] ▶  — identical control reused for week / month / year
+    navGroup(container, label, stepFn) {
+        const g = container.createEl('div', { cls: 'tc-nav-group' });
+        const pv = g.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(pv, 'chevron-left'); pv.onclick = () => stepFn(-1);
+        const lbl = g.createEl('button', { cls: 'tc-nav-label', text: label });
+        lbl.setAttribute('aria-label', t('До поточного'));
+        lbl.onclick = () => { this.anchor = new Date(); this.refresh(); };
+        const nx = g.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(nx, 'chevron-right'); nx.onclick = () => stepFn(1);
+        return g;
+    }
 
     async refresh() {
-        this._lastCompact = compactMode(this);
+        this._narrow = this.isNarrow();
         const root = this.containerEl.children[1];
-        root.empty();
-        root.addClass('tc-pane');
-
         const habits = habitList(this.plugin.settings);
 
-        const bar = root.createEl('div', { cls: 'tc-cal-header' });
-        bar.createEl('div', { text: t('Звички'), cls: 'tc-cal-title' });
-        const nav = bar.createEl('div', { cls: 'tc-nav-group' });
-        const prev = nav.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(prev, 'chevron-left');
-        prev.onclick = () => this.shiftWeek(-1);
-        nav.createEl('button', { text: t('Цей тиждень') }).onclick = () => { this.anchor = new Date(); this.refresh(); };
-        const next = nav.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(next, 'chevron-right');
-        next.onclick = () => this.shiftWeek(1);
-
         if (!habits.length) {
+            root.empty(); root.addClass('tc-pane');
+            const bar = root.createEl('div', { cls: 'tc-cal-header' });
+            bar.createEl('div', { text: t('Звички'), cls: 'tc-cal-title' });
+            const add = bar.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(add, 'plus');
+            add.onclick = () => this.openCreate();
             root.createEl('p', { text: t('Звичок ще немає. Створіть їх через Ctrl+P → Звичка.'), cls: 'tc-empty' });
             return;
         }
+        if (!this.selectedHabit || !habits.find(h => h.id === this.selectedHabit)) this.selectedHabit = habits[0].id;
 
-        await this.renderGrid(root, habits);
-        root.createEl('div', { cls: 'tc-hr' });
-        await this.renderHeatmap(root, habits);
-    }
-
-    habitCell(cell, habit, iso, v) {
-        if (habit.auto) {
-            cell.createSpan({ text: v ? String(v) : '–', cls: 'tc-habit-auto' });
-        } else if (habit.type === 'bool') {
-            makeCheckbox(cell, v > 0, checked => setHabitValue(this.app, iso, habit, checked ? true : null));
-        } else {
-            const inp = cell.createEl('input', { cls: 'tc-habit-input' });
-            inp.type = 'number';
-            inp.placeholder = '–';
-            if (v) inp.value = String(v);
-            inp.onchange = () => {
-                const num = inp.value === '' ? null : Number(inp.value);
-                setHabitValue(this.app, iso, habit, (num == null || isNaN(num)) ? null : num);
-            };
+        // ── gather ALL data BEFORE emptying (anti-flicker). Frontmatter is read once
+        //    from the (synchronous) metadata cache; word counts only if a word habit exists.
+        this._files = getDateFiles(this.app);                     // [{file, date}]
+        this._fm = new Map();
+        for (const { file, date } of this._files) {
+            const fc = this.app.metadataCache.getFileCache(file);
+            this._fm.set(date, (fc && fc.frontmatter) || {});
         }
-    }
-
-    async renderGrid(root, habits) {
-        const start = startOfWeek(this.anchor);
-        const days = [];
-        for (let i = 0; i < 7; i++) days.push(addDays(start, i));
-        const todayStr = todayISO();
-
-        // precompute values (word-count habit needs async file reads)
-        const val = {};
-        for (const h of habits) {
-            val[h.id] = {};
-            for (const d of days) val[h.id][toISO(d)] = await getHabitValue(this.app, toISO(d), h);
+        this._words = new Map();
+        if (habits.some(h => h.auto === 'words')) {
+            for (const { file, date } of this._files) this._words.set(date, countWords(await this.app.vault.read(file)));
         }
 
-        // compact: one card per habit with a row of 7 day cells
-        if (compactMode(this)) {
-            const cards = root.createEl('div', { cls: 'tc-habit-cards' });
-            for (const habit of habits) {
-                const card = cards.createEl('div', { cls: 'tc-habit-card' });
-                const title = card.createEl('div', { cls: 'tc-habit-title' });
-                if (habit.emoji) title.createSpan({ text: habit.emoji + ' ' });
-                title.createSpan({ text: habit.name });
-                const week = card.createEl('div', { cls: 'tc-habit-week' });
-                for (const day of days) {
-                    const iso = toISO(day);
-                    const dc = week.createEl('div', { cls: 'tc-habit-daycell' });
-                    if (iso === todayStr) dc.addClass('tc-habit-today');
-                    dc.createEl('div', { text: WD_UA[(day.getDay() + 6) % 7], cls: 'tc-habit-dl' });
-                    this.habitCell(dc.createEl('div', { cls: 'tc-habit-ctl' }), habit, iso, val[habit.id][iso]);
-                }
-            }
+        // ── render synchronously ──
+        root.empty();
+        root.addClass('tc-pane');
+        if (this._narrow) {
+            if (this.mobileDetail) this.renderHabitDetail(root, habits, true);
+            else this.renderHabitList(root, habits, true);
             return;
         }
+        const pane = root.createEl('div', { cls: 'tc-habits-2pane' });
+        this.renderHabitList(pane.createEl('div', { cls: 'tc-habits-list' }), habits, false);
+        this.renderHabitDetail(pane.createEl('div', { cls: 'tc-habits-detail' }), habits, false);
+    }
 
-        const table = root.createEl('div', { cls: 'tc-habits' });
-        const hrow = table.createEl('div', { cls: 'tc-habit-row tc-habit-head' });
-        hrow.createEl('div', { cls: 'tc-habit-name' });
-        for (const day of days) {
-            const c = hrow.createEl('div', { cls: 'tc-habit-cell' });
-            if (toISO(day) === todayStr) c.addClass('tc-habit-today');
-            c.createEl('div', { text: WD_UA[(day.getDay() + 6) % 7], cls: 'tc-col-wd' });
-            c.createEl('div', { text: `${pad(day.getDate())}.${pad(day.getMonth() + 1)}`, cls: 'tc-col-date' });
+    openCreate() {
+        const m = new HabitCreateModal(this.app, this.plugin);
+        const orig = m.onClose.bind(m);
+        m.onClose = () => { orig(); this.refresh(); };
+        m.open();
+    }
+
+    currentStreak(habit) {
+        let s = 0;
+        const today = parseISO(todayISO());
+        for (let i = 0; i < 180; i++) {
+            const v = this.val(toISO(addDays(today, -i)), habit);
+            if (habitDone(v, habit)) s++;
+            else if (i === 0) continue;   // today still pending — don't zero an ongoing streak
+            else break;
+        }
+        return s;
+    }
+
+    cellInput(cell, habit, iso, v) {
+        if (habit.auto) return;
+        cell.addClass('tc-clickable');
+        // no manual refresh — the metadataCache 'changed' event re-renders with fresh data
+        cell.onclick = () => {
+            if (habit.type === 'bool') setHabitValue(this.app, iso, habit, v > 0 ? null : true);
+            else new HabitCompleteModal(this.app, habit, iso, () => {}).open();
+        };
+    }
+
+    // ── left: habit list with week ring-header ───────────────────────────────
+    renderHabitList(root, habits, mobile) {
+        const bar = root.createEl('div', { cls: 'tc-cal-header' });
+        bar.createEl('div', { text: t('Звички'), cls: 'tc-cal-title' });
+        const ctr = bar.createEl('div', { cls: 'tc-cal-controls' });
+        const start = startOfWeek(this.anchor), wkEnd = addDays(start, 6);
+        const wkLabel = `${pad(start.getDate())}.${pad(start.getMonth() + 1)} – ${pad(wkEnd.getDate())}.${pad(wkEnd.getMonth() + 1)}`;
+        this.navGroup(ctr, wkLabel, dir => this.weekStep(dir));
+        const add = ctr.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(add, 'plus');
+        add.setAttribute('aria-label', t('Нова звичка')); add.onclick = () => this.openCreate();
+
+        const days = []; for (let i = 0; i < 7; i++) days.push(addDays(start, i));
+        const todayStr = todayISO();
+
+        const head = root.createEl('div', { cls: 'tc-hl-grid tc-hl-weekhead' });
+        head.createEl('div', { cls: 'tc-hl-corner' });
+        for (const d of days) {
+            const iso = toISO(d);
+            const col = head.createEl('div', { cls: iso === todayStr ? 'tc-hl-dayhead tc-hl-today' : 'tc-hl-dayhead' });
+            col.createEl('div', { text: WD_UA[(d.getDay() + 6) % 7], cls: 'tc-col-wd' });
+            let sum = 0; for (const h of habits) sum += habitProgress(this.val(iso, h), h);
+            makeRing(col, habits.length ? sum / habits.length : 0, 'var(--interactive-accent)', { size: 26, stroke: 3, center: String(d.getDate()) });
         }
 
         for (const habit of habits) {
-            const row = table.createEl('div', { cls: 'tc-habit-row' });
-            const nameCell = row.createEl('div', { cls: 'tc-habit-name' });
-            const title = nameCell.createEl('div', { cls: 'tc-habit-title' });
-            if (habit.emoji) title.createSpan({ text: habit.emoji + ' ' });
-            title.createSpan({ text: habit.name });
-            nameCell.createEl('div', { text: habit.type === 'bool' ? t('так/ні') : (habit.unit || ''), cls: 'tc-habit-unit' });
+            const row = root.createEl('div', { cls: 'tc-hl-grid tc-hl-row' + (habit.id === this.selectedHabit ? ' is-selected' : '') });
+            const info = row.createEl('div', { cls: 'tc-hl-info' });
+            info.onclick = () => { this.selectedHabit = habit.id; if (this._narrow) this.mobileDetail = true; this.refresh(); };
+            const badge = info.createEl('div', { cls: 'tc-hl-badge', text: habit.emoji || '•' });
+            if (habit.color) badge.style.background = `color-mix(in srgb, ${habit.color} 30%, transparent)`;
+            const meta = info.createEl('div', { cls: 'tc-hl-meta' });
+            meta.createEl('div', { text: habit.name, cls: 'tc-hl-name' });
+            meta.createEl('div', { cls: 'tc-hl-streak', text: `🔥 ${this.currentStreak(habit)} ${t('дн.')}` });
 
-            for (const day of days) {
-                const iso = toISO(day);
-                const cell = row.createEl('div', { cls: 'tc-habit-cell' });
-                if (iso === todayStr) cell.addClass('tc-habit-today');
-                this.habitCell(cell, habit, iso, val[habit.id][iso]);
+            for (const d of days) {
+                const iso = toISO(d);
+                const cell = row.createEl('div', { cls: 'tc-hl-cell' });
+                const v = this.val(iso, habit);
+                const w = makeRing(cell, habitProgress(v, habit), habit.color || 'var(--interactive-accent)', { size: 24, stroke: 3 });
+                if (habitDone(v, habit)) w.addClass('tc-ring-done');
+                this.cellInput(cell, habit, iso, v);
             }
         }
     }
 
-    async renderHeatmap(root, habits) {
-        const settings = this.plugin.settings;
-        const single = this.heatHabit !== 'all' ? habits.find(h => h.id === this.heatHabit) : null;
+    // ── right: detail of the selected habit ──────────────────────────────────
+    renderHabitDetail(root, habits, mobile) {
+        const habit = habits.find(h => h.id === this.selectedHabit) || habits[0];
 
-        // controls
-        const ctrls = root.createEl('div', { cls: 'tc-heat-ctrls' });
-        const habitSel = ctrls.createEl('select', { cls: 'dropdown' });
-        const optAll = habitSel.createEl('option', { text: t('Усі звички') }); optAll.value = 'all';
-        if (this.heatHabit === 'all') optAll.selected = true;
-        for (const h of habits) {
-            const o = habitSel.createEl('option', { text: (h.emoji ? h.emoji + ' ' : '') + h.name }); o.value = h.id;
-            if (this.heatHabit === h.id) o.selected = true;
+        const head = root.createEl('div', { cls: 'tc-hd-head' });
+        if (mobile) {
+            const back = head.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(back, 'arrow-left');
+            back.setAttribute('aria-label', t('← Назад')); back.onclick = () => { this.mobileDetail = false; this.refresh(); };
         }
-        habitSel.onchange = () => { this.heatHabit = habitSel.value; this.refresh(); };
-
-        const periodSel = ctrls.createEl('select', { cls: 'dropdown' });
-        for (const [v, l] of [['month', 'Місяць'], ['year', 'Рік']]) {
-            const o = periodSel.createEl('option', { text: t(l) }); o.value = v;
-            if (this.heatPeriod === v) o.selected = true;
+        const title = head.createEl('div', { cls: 'tc-hd-title' });
+        title.createEl('span', { cls: 'tc-hd-emoji', text: habit.emoji || '•' });
+        title.createEl('span', { text: habit.name });
+        if (!habit.auto) {
+            const more = head.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(more, 'more-horizontal');
+            more.onclick = e => {
+                const menu = new obsidian.Menu();
+                menu.addItem(it => it.setTitle(t('Редагувати')).setIcon('pencil').onClick(() => {
+                    new HabitEditModal(this.app, this.plugin, habit, () => this.refresh()).open();
+                }));
+                menu.addItem(it => it.setTitle(t('Видалити')).setIcon('trash').onClick(async () => {
+                    this.plugin.settings.habits = this.plugin.settings.habits.filter(h => h.id !== habit.id);
+                    await this.plugin.saveSettings();
+                    this.selectedHabit = null; this.mobileDetail = false; this.refresh();
+                }));
+                menu.showAtMouseEvent(e);
+            };
         }
-        periodSel.onchange = () => { this.heatPeriod = periodSel.value; this.refresh(); };
 
-        const nav = ctrls.createEl('div', { cls: 'tc-nav-group' });
-        const step = dir => {
-            if (this.heatPeriod === 'year') this.heatAnchor = new Date(this.heatAnchor.getFullYear() + dir, 0, 1);
-            else this.heatAnchor = new Date(this.heatAnchor.getFullYear(), this.heatAnchor.getMonth() + dir, 1);
-            this.refresh();
+        // month (follows the shared anchor) + all-time aggregates — all synchronous
+        const y = this.anchor.getFullYear(), m = this.anchor.getMonth();
+        const last = new Date(y, m + 1, 0).getDate();
+        const monthIsos = []; for (let dd = 1; dd <= last; dd++) monthIsos.push(toISO(new Date(y, m, dd)));
+        const monthVals = {}; for (const iso of monthIsos) monthVals[iso] = this.val(iso, habit);
+
+        let monthChecks = 0, monthCount = 0;
+        for (const iso of monthIsos) { const v = monthVals[iso]; monthCount += v; if (habitDone(v, habit)) monthChecks++; }
+        const rate = monthIsos.length ? Math.round(monthChecks / monthIsos.length * 100) : 0;
+
+        let totalChecks = 0, totalCount = 0;
+        for (const { date } of this._files) { const v = this.val(date, habit); totalCount += v; if (habitDone(v, habit)) totalChecks++; }
+        const streak = this.currentStreak(habit);
+
+        const grid = root.createEl('div', { cls: 'tc-metric-grid' });
+        const card = (icon, label, value, sub) => {
+            const c = grid.createEl('div', { cls: 'tc-metric-card' });
+            const top = c.createEl('div', { cls: 'tc-metric-top' });
+            const ic = top.createEl('span', { cls: 'tc-metric-icon' }); obsidian.setIcon(ic, icon);
+            top.createEl('span', { text: label, cls: 'tc-metric-label' });
+            c.createEl('div', { text: String(value), cls: 'tc-metric-value' });
+            if (sub) c.createEl('div', { text: sub, cls: 'tc-metric-sub' });
         };
-        const pv = nav.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(pv, 'chevron-left'); pv.onclick = () => step(-1);
-        const nx = nav.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(nx, 'chevron-right'); nx.onclick = () => step(1);
+        card('check-circle', t('Щомісячні перевірки'), monthChecks, t('День'));
+        card('list', t('Загальна реєстрація'), totalChecks, t('День'));
+        card('percent', t('Щомісячна ставка реєстрації'), rate + ' %');
+        card('flame', t('Поточна серія'), streak, t('День'));
+        card('bar-chart', t('Щомісячне виконання'), monthCount, t('Рахунок'));
+        card('bar-chart-2', t('Загальний обсяг виконання'), totalCount, t('Рахунок'));
 
-        // period range
-        const y = this.heatAnchor.getFullYear();
-        let from, to, title;
-        if (this.heatPeriod === 'year') {
-            from = new Date(y, 0, 1); to = new Date(y, 11, 31); title = String(y);
-        } else {
-            const m = this.heatAnchor.getMonth();
-            from = new Date(y, m, 1); to = new Date(y, m + 1, 0); title = `${MONTHS_UA[m]} ${y}`;
-        }
-        ctrls.createEl('div', { text: title, cls: 'tc-heat-title' });
+        this.renderRingCalendar(root, habit, monthVals, y, m);
+        this.renderBarChart(root, habit, monthIsos, monthVals);
+        this.renderHeatmapBlock(root, habit);
+    }
 
-        // gather values per day
-        const base = single ? (single.color || 'var(--interactive-accent)') : 'var(--interactive-accent)';
-        const values = new Map();   // iso -> value
-        let max = 0;
-        for (let d = new Date(from); d <= to; d = addDays(d, 1)) {
+    renderRingCalendar(root, habit, monthVals, y, m) {
+        const wrap = root.createEl('div', { cls: 'tc-ring-cal' });
+        const hd = wrap.createEl('div', { cls: 'tc-cal-header' });
+        hd.createEl('div', { text: t('Місяць'), cls: 'tc-hd-subhead' });
+        this.navGroup(hd, `${MONTHS_UA[m]} ${y}`, dir => this.monthStep(dir));
+
+        const grid = wrap.createEl('div', { cls: 'tc-ringcal-grid' });
+        for (const wd of weekdayHeaders()) grid.createEl('div', { text: wd, cls: 'tc-wd' });
+        const todayStr = todayISO();
+        const gs = startOfWeek(new Date(y, m, 1));
+        for (let i = 0; i < 42; i++) {
+            const d = addDays(gs, i);
+            const inMonth = d.getMonth() === m;
             const iso = toISO(d);
-            let v;
-            if (single) v = await getHabitValue(this.app, iso, single);
-            else {
-                v = 0;
-                for (const h of habits) if ((await getHabitValue(this.app, iso, h)) > 0) v++;
-            }
-            values.set(iso, v);
-            if (v > max) max = v;
+            const cell = grid.createEl('div', { cls: inMonth ? 'tc-ringcal-cell' : 'tc-ringcal-cell tc-outside' });
+            const v = inMonth ? monthVals[iso] : 0;
+            makeRing(cell, habitProgress(v, habit), habit.color || 'var(--interactive-accent)', { size: 34, stroke: 3, center: String(d.getDate()) });
+            if (iso === todayStr) cell.addClass('tc-today');
+            if (inMonth) this.cellInput(cell, habit, iso, v);
         }
-        if (!single) max = habits.length;          // "all" scales to number of habits
-        max = Math.max(max, 1);
-
-        const unit = single ? (single.unit || (single.type === 'bool' ? t('разів') : '')) : t('звичок');
-
-        const cellFor = (iso, dim) => {
-            const v = values.has(iso) ? values.get(iso) : 0;
-            const cell = document.createElement('div');
-            cell.className = 'tc-heat-cell' + (dim ? ' tc-heat-dim' : '');
-            cell.style.background = heatColor(base, heatLevel(v, max));
-            cell.title = `${iso}: ${v}${unit ? ' ' + unit : ''}`;
-            return cell;
-        };
-
-        const wrap = root.createEl('div', { cls: 'tc-heat' });
-        if (this.heatPeriod === 'month') {
-            const grid = wrap.createEl('div', { cls: 'tc-heat-month' });
-            for (const wd of weekdayHeaders()) grid.createEl('div', { text: wd, cls: 'tc-heat-wd' });
-            const gridStart = startOfWeek(from);
-            for (let i = 0; i < 42; i++) {
-                const d = addDays(gridStart, i);
-                if (d > to && d.getMonth() !== from.getMonth()) { grid.createEl('div'); continue; }
-                const inMonth = d.getMonth() === from.getMonth();
-                grid.appendChild(cellFor(toISO(d), !inMonth));
-            }
-        } else {
-            const cols = wrap.createEl('div', { cls: 'tc-heat-year' });
-            let d = startOfWeek(from);
-            while (d <= to) {
-                const col = cols.createEl('div', { cls: 'tc-heat-col' });
-                for (let i = 0; i < 7; i++) {
-                    const day = addDays(d, i);
-                    col.appendChild(cellFor(toISO(day), day < from || day > to));
-                }
-                d = addDays(d, 7);
-            }
-        }
-
-        if (single) this.renderStats(root, values, max, single, unit);
     }
 
-    renderStats(root, values, max, habit, unit) {
-        const isos = [...values.keys()].sort();
-        let total = 0, record = 0, streak = 0, longest = 0;
-        for (const iso of isos) {
-            const v = values.get(iso);
-            total += v;
-            if (v > record) record = v;
-            if (v > 0) { streak++; longest = Math.max(longest, streak); } else streak = 0;
-        }
-        const periodLabel = this.heatPeriod === 'year' ? t('За рік') : t('За місяць');
+    renderBarChart(root, habit, monthIsos, monthVals) {
+        const wrap = root.createEl('div', { cls: 'tc-barchart-wrap' });
+        wrap.createEl('div', { cls: 'tc-hd-subhead', text: 'Daily Goals' + (habit.unit ? ` (${habit.unit})` : '') });
+        let max = habit.goal > 0 ? habit.goal : 1;
+        for (const iso of monthIsos) max = Math.max(max, monthVals[iso]);
 
-        const box = root.createEl('div', { cls: 'tc-stats' });
-        const card = (label, value, sub) => {
-            const c = box.createEl('div', { cls: 'tc-stat-card' });
-            c.createEl('div', { text: label, cls: 'tc-stat-label' });
-            c.createEl('div', { text: String(value), cls: 'tc-stat-value' });
-            if (sub) c.createEl('div', { text: sub, cls: 'tc-stat-sub' });
-        };
-        card(t('Найдовша серія'), longest, t('днів підряд'));
-        card(t('Рекорд за день'), record, unit);
-        card(periodLabel, total.toLocaleString(), unit);
+        const chart = wrap.createEl('div', { cls: 'tc-barchart' });
+        const tip = chart.createEl('div', { cls: 'tc-bar-tip' }); tip.style.display = 'none';
+        if (habit.goal > 0) {
+            const line = chart.createEl('div', { cls: 'tc-bar-goalline' });
+            line.style.bottom = `${habit.goal / max * 100}%`;
+            line.createEl('span', { cls: 'tc-bar-goallabel', text: t('Ціль') + ' ' + habit.goal });
+        }
+        monthIsos.forEach((iso, idx) => {
+            const v = monthVals[iso];
+            const col = chart.createEl('div', { cls: 'tc-bar-col' });
+            const fill = col.createEl('div', { cls: habitDone(v, habit) ? 'tc-bar-fill tc-bar-done' : 'tc-bar-fill' });
+            fill.style.height = `${Math.min(1, v / max) * 100}%`;
+            if (habit.color && habitDone(v, habit)) fill.style.background = habit.color;
+            col.addEventListener('mouseenter', () => { tip.style.display = ''; tip.setText(String(v)); tip.style.left = `${(idx + 0.5) / monthIsos.length * 100}%`; });
+            col.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+        });
+
+        const axis = wrap.createEl('div', { cls: 'tc-barchart-axis' });
+        monthIsos.forEach((iso, idx) => {
+            const day = idx + 1;
+            const lab = axis.createEl('div', { cls: 'tc-bar-axislabel' });
+            if (day === 1 || day % 5 === 0) lab.setText(String(day));
+        });
+    }
+
+    renderHeatmapBlock(root, habit) {
+        const wrap = root.createEl('div', { cls: 'tc-heatblock' });
+        const hd = wrap.createEl('div', { cls: 'tc-cal-header' });
+        hd.createEl('div', { text: t('Рік'), cls: 'tc-hd-subhead' });
+        this.navGroup(hd, String(this.anchor.getFullYear()), dir => this.yearStep(dir));
+
+        const yy = this.anchor.getFullYear();
+        const from = new Date(yy, 0, 1), to = new Date(yy, 11, 31);
+        const base = habit.color || 'var(--interactive-accent)';
+        let max = habit.goal > 0 ? habit.goal : 1;
+        for (let d = new Date(from); d <= to; d = addDays(d, 1)) max = Math.max(max, this.val(toISO(d), habit));
+        const unit = habit.unit || (habit.type === 'bool' ? t('разів') : '');
+        const activeWeek = toISO(startOfWeek(this.anchor));
+
+        const cols = wrap.createEl('div', { cls: 'tc-heat tc-heat-year' });
+        let d = startOfWeek(from);
+        while (d <= to) {
+            const col = cols.createEl('div', { cls: 'tc-heat-col' });
+            if (toISO(d) === activeWeek) col.addClass('tc-heat-col-active');
+            for (let i = 0; i < 7; i++) {
+                const day = addDays(d, i);
+                const iso = toISO(day);
+                const dim = day < from || day > to;
+                const v = dim ? 0 : this.val(iso, habit);
+                const cell = col.createEl('div', { cls: dim ? 'tc-heat-cell tc-heat-dim' : 'tc-heat-cell' });
+                cell.style.background = heatColor(base, heatLevel(v, max));
+                cell.title = `${iso}: ${v}${unit ? ' ' + unit : ''}`;
+            }
+            d = addDays(d, 7);
+        }
     }
 }

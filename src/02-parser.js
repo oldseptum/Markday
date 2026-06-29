@@ -1,10 +1,11 @@
 // ─── Task parsing ────────────────────────────────────────────────────────────
 
 function parseTaskLine(line, lineNum) {
-    const m = line.match(/^(\s*)- \[(x| )\] (.*)$/);
+    const m = line.match(/^(\s*)- \[(x| |-)\] (.*)$/);
     if (!m) return null;
 
     const done = m[2] === 'x';
+    const cancelled = m[2] === '-';
     let body = m[3];
 
     // trailing block ids: ^rc-<id> (recurrence rule) and ^tcd-<id> (description heading)
@@ -47,7 +48,7 @@ function parseTaskLine(line, lineNum) {
         .replace(/\s{2,}/g, ' ')
         .trim();
 
-    return { done, text, tags, group, priority, start, end, recId, descId, line: lineNum };
+    return { done, cancelled, text, tags, group, priority, start, end, recId, descId, line: lineNum };
 }
 
 // Find a task's description (content under the `^tcd-<id>` heading); returns {text, headingLine, endLine}

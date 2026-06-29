@@ -138,6 +138,24 @@ function renderTimeline(view, root, n) {
         s.createEl('span', { text: `▴ ${pad(rangeEnd)}:00 – 24:00` });
         s.onclick = () => { view.showLate = true; refresh(); };
     }
+
+    // current-time line — only when today is one of the shown days
+    if (view._nowTimer) { clearInterval(view._nowTimer); view._nowTimer = null; }
+    if (days.some(d => d.iso === todayStr)) {
+        const nowLine = grid.createEl('div', { cls: 'tc-tl-now' });
+        const place = () => {
+            const m = new Date();
+            const mm = m.getHours() * 60 + m.getMinutes();
+            if (mm < rangeStartMin || mm > rangeEndMin) { nowLine.style.display = 'none'; return; }
+            nowLine.style.display = '';
+            nowLine.style.top = `${(mm - rangeStartMin) / 60 * HOUR_PX}px`;
+        };
+        place();
+        view._nowTimer = window.setInterval(() => {
+            if (!nowLine.isConnected) { clearInterval(view._nowTimer); view._nowTimer = null; return; }
+            place();
+        }, 60000);
+    }
 }
 
 // Lay out time-overlapping events into side-by-side columns (mutates items: .col/.cols)
@@ -224,9 +242,10 @@ function renderEventCard(view, col, task, ctx, layout) {
     applyCardColor(card, task, ctx.colorBy, ctx.priorityDot);
     if (task.virtual) card.addClass('tc-virtual');   // dashed only for not-yet-materialized recurrences
     if (task.done) card.addClass('tc-tl-done');
+    if (task.cancelled) card.addClass('tc-cancelled');
 
     // checkbox (timed tasks)
-    const cb = makeCheckbox(card, task.done, async checked => {
+    const cb = makeStatusCheckbox(card, task, async checked => {
         if (task.virtual) await materializeVirtual(app, task, checked, view.plugin.settings);
         else await toggleTask(app, task.file, task.line, checked);
         ctx.refresh();

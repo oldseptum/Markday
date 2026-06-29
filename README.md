@@ -55,14 +55,15 @@ A calendar **and** task manager for [Obsidian](https://obsidian.md) that works e
   - **Smart list** — a mobile-first agenda: quick add, today’s habits, today’s tasks, then the next 7 days.
   - **Calendar** — Month, Overview (dots), Week, Work week and 3‑day modes.
   - **Tasks** — a grouped/sorted task list with filters and an overdue section.
-  - **Habits** — a weekly tracker plus a GitHub-style heatmap with per-habit stats.
+  - **Habits** — a two‑pane dashboard: weekly overview, per‑day progress rings, streaks, monthly/all‑time stats, a month ring‑calendar, a daily‑goals chart and a year heatmap.
   - **Mini calendar** — a compact month for the sidebar.
-- **Tasks & events** — a task becomes an **event** when it has a time (`14:00` or `14:00-15:30`). The week/3‑day **timeline** lets you drag to move, drag the edges to resize, drag across days, and click-drag on empty space to create.
+- **Three task states** — `- [ ]` to‑do, `- [x]` done, and `- [-]` **cancelled** (won’t‑do): cancelled tasks stay on the calendar, dimmed, with an ✕ instead of a check.
+- **Tasks & events** — a task becomes an **event** when it has a time (`14:00` or `14:00-15:30`). The week/3‑day **timeline** lets you drag to move, drag the edges to resize, drag across days, and click-drag on empty space to create. A red line marks the current time.
 - **Subtasks & descriptions** — indent a checkbox for a subtask (auto progress + auto‑complete of the parent); add a free‑form description that lives under a per‑task heading (text, images, anything).
-- **Recurring tasks** — defined once, projected on the calendar virtually; a real line is written only when you tick a recurrence (no folder full of generated files).
-- **Habits** — numeric (e.g. pages, km, minutes) or yes/no, with emoji and color; values are stored in the day note’s frontmatter. Includes an optional built‑in **“words written”** habit that counts words in the day’s note automatically.
+- **Recurring tasks** — defined once, projected on the calendar virtually; a real line is written only when you tick a recurrence (no folder full of generated files). Rules cover daily/weekly/monthly/yearly with custom intervals, specific weekdays, **nth weekday** (e.g. last Friday), **first/last working day**, and yearly‑in‑a‑month.
+- **Habits** — numeric (e.g. pages, km, minutes) or yes/no, with emoji, color and an optional **daily goal** (drives the progress rings and completion %). Values live in the day note’s frontmatter. Includes an optional built‑in **“words written”** habit that counts words in the day’s note automatically.
 - **Organization** — priorities, `#tags`, `@groups`, color rules (by priority/tag/group), filtering, and a configurable colored coding.
-- **Quality of life** — quick‑create modal (Ctrl/Cmd+P), inline task composer with date/recurrence and tag/priority popovers, first‑day‑of‑week, working hours, default tag/group/priority, and a floating **+** button on mobile.
+- **Quality of life** — a focused **create** window (title + description with inline `#`/`@` autocomplete, quick status/priority/date/recurrence row), a live‑saving **task editor** card, quick‑create commands (Ctrl/Cmd+P), an inline composer, first‑day‑of‑week, working hours, default tag/group/priority, and a floating **+** button on mobile.
 
 ---
 
@@ -74,6 +75,7 @@ Tasks are normal Markdown checkboxes under a configurable heading (default `## T
 ## Tasks
 - [ ] 14:00-15:30 Project meeting #work !high @alpha
 - [x] Read 30 pages #reading
+- [-] File the tax return #chores          ← cancelled (won’t‑do)
 - [ ] Plan the week !med
     - [ ] Review goals          ← subtask (indented checkbox)
     - A quick note               ← comment (indented bullet)
@@ -81,6 +83,8 @@ Tasks are normal Markdown checkboxes under a configurable heading (default `## T
 ### Plan the week ^tcd-a1b2c3   ← optional description, linked to the task
 Free text, images, links — anything.
 ```
+
+A checkbox is `- [ ]` to‑do, `- [x]` done, or `- [-]` cancelled. A recurring instance you tick gets a trailing `^rc-<id>` marker; a task with a description gets `^tcd-<id>` linking it to its heading.
 
 | Element     | Syntax            | Example          |
 |-------------|-------------------|------------------|

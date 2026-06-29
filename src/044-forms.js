@@ -55,15 +55,34 @@ function buildChips(container, values, options, single, placeholder) {
 }
 
 function newTaskDraft() { return { text: '', date: todayISO(), tags: '', group: '' }; }
-function newRecurrenceDraft() { return { raw: '', freq: 'daily', interval: 1, weekdays: [], monthday: '', start: todayISO(), end: '' }; }
-function newHabitDraft() { return { name: '', property: '', unit: '', type: 'number', emoji: '', color: '#9aa0a6' }; }
+function newRecurrenceDraft() { return { raw: '', freq: 'daily', interval: 1, weekdays: [], monthMode: 'day', monthday: '', nth: 1, weekday: 0, which: 'first', month: new Date().getMonth(), start: todayISO(), end: '' }; }
+
+// Map a recurrence draft → schedule fields of a rule (no id/raw/start/end). Shared by
+// the create flow, the settings edit modal and the live preview.
+function ruleFromRecDraft(d) {
+    const rule = { freq: d.freq, interval: Math.max(1, Number(d.interval) || 1) };
+    if (d.freq === 'weekly') rule.weekdays = (d.weekdays || []).slice();
+    if (d.freq === 'monthly' || d.freq === 'yearly') {
+        rule.monthMode = d.monthMode || 'day';
+        if (rule.monthMode === 'day') rule.monthday = Number(d.monthday) || null;
+        else if (rule.monthMode === 'weekday') { rule.nth = Number(d.nth) || 1; rule.weekday = Number(d.weekday) || 0; }
+        else if (rule.monthMode === 'workday') rule.which = d.which || 'first';
+    }
+    if (d.freq === 'yearly') rule.month = (d.month != null && d.month !== '') ? Number(d.month) : new Date().getMonth();
+    return rule;
+}
+function newHabitDraft() { return { name: '', property: '', unit: '', type: 'number', emoji: '', color: '#9aa0a6', goal: '' }; }
 
 // Render recurrence fields into `containerEl`. `rerender` is called when the set of
 // visible fields changes (frequency / weekday toggles) so the caller can rebuild.
-function buildRecurrenceFields(containerEl, d, rerender) {
-    new obsidian.Setting(containerEl).setName(t('Назва'))
-        .setDesc(t('Формат задачі: "14:00 Полити квіти #дім !med"'))
-        .addText(c => c.setPlaceholder(t('напр. Полити квіти #дім')).setValue(d.raw).onChange(v => d.raw = v));
+// opts.hideRaw → omit the task-text field; opts.hideDates → omit start/end (create flow).
+function buildRecurrenceFields(containerEl, d, rerender, opts) {
+    opts = opts || {};
+    if (!opts.hideRaw) {
+        new obsidian.Setting(containerEl).setName(t('Назва'))
+            .setDesc(t('Формат задачі: "14:00 Полити квіти #дім !med"'))
+            .addText(c => c.setPlaceholder(t('напр. Полити квіти #дім')).setValue(d.raw).onChange(v => d.raw = v));
+    }
 
     new obsidian.Setting(containerEl).setName(t('Повторювати'))
         .addDropdown(dd => {
@@ -87,30 +106,48 @@ function buildRecurrenceFields(containerEl, d, rerender) {
         }));
     }
 
-    if (d.freq === 'monthly') {
-        new obsidian.Setting(containerEl).setName(t('Число місяця'))
-            .addText(c => c.setPlaceholder('1-31').setValue(String(d.monthday || '')).onChange(v => d.monthday = Number(v) || ''));
+    if (d.freq === 'yearly') {
+        new obsidian.Setting(containerEl).setName(t('Місяць'))
+            .addDropdown(dd => { MONTHS_UA.forEach((mn, i) => dd.addOption(String(i), mn)); dd.setValue(String(d.month != null ? d.month : new Date().getMonth())).onChange(v => d.month = Number(v)); });
     }
 
-    new obsidian.Setting(containerEl).setName(t('Початок'))
-        .addText(c => { c.inputEl.type = 'date'; c.setValue(d.start).onChange(v => d.start = v); });
-    new obsidian.Setting(containerEl).setName(t('Кінець (необов.)'))
-        .addText(c => { c.inputEl.type = 'date'; c.setValue(d.end).onChange(v => d.end = v); });
+    if (d.freq === 'monthly' || d.freq === 'yearly') {
+        new obsidian.Setting(containerEl).setName(t('Режим'))
+            .addDropdown(dd => {
+                dd.addOption('day', t('За днем місяця')).addOption('weekday', t('За днем тижня')).addOption('workday', t('Робочий день'));
+                dd.setValue(d.monthMode || 'day').onChange(v => { d.monthMode = v; rerender(); });
+            });
+        const mode = d.monthMode || 'day';
+        if (mode === 'day') {
+            new obsidian.Setting(containerEl).setName(t('Число місяця'))
+                .addText(c => c.setPlaceholder('1-31').setValue(String(d.monthday || '')).onChange(v => d.monthday = Number(v) || ''));
+        } else if (mode === 'weekday') {
+            new obsidian.Setting(containerEl).setName(t('Який'))
+                .addDropdown(dd => { [['1', t('перший')], ['2', t('другий')], ['3', t('третій')], ['4', t('четвертий')], ['-1', t('останній')]].forEach(o => dd.addOption(o[0], o[1])); dd.setValue(String(d.nth || 1)).onChange(v => d.nth = Number(v)); })
+                .addDropdown(dd => { WD_UA.forEach((w, i) => dd.addOption(String(i), w)); dd.setValue(String(d.weekday || 0)).onChange(v => d.weekday = Number(v)); });
+        } else {
+            new obsidian.Setting(containerEl).setName(t('Робочий день'))
+                .addDropdown(dd => { dd.addOption('first', t('перший')).addOption('last', t('останній')); dd.setValue(d.which || 'first').onChange(v => d.which = v); });
+        }
+    }
+
+    if (!opts.hideDates) {
+        new obsidian.Setting(containerEl).setName(t('Початок'))
+            .addText(c => { c.inputEl.type = 'date'; c.setValue(d.start).onChange(v => d.start = v); });
+        new obsidian.Setting(containerEl).setName(t('Кінець (необов.)'))
+            .addText(c => { c.inputEl.type = 'date'; c.setValue(d.end).onChange(v => d.end = v); });
+    }
+
+    containerEl.createEl('div', { cls: 'tc-rec-preview', text: '↻ ' + describeRule(ruleFromRecDraft(d)) });
 }
 
 function validateRecurrence(d) {
     if (!d.raw.trim()) { new obsidian.Notice(t('Введіть текст задачі')); return null; }
-    if (d.freq === 'weekly' && d.weekdays.length === 0) { new obsidian.Notice(t('Оберіть хоча б один день тижня')); return null; }
-    const rule = {
-        id: genId(),
-        raw: d.raw.trim(),
-        freq: d.freq,
-        interval: Math.max(1, Number(d.interval) || 1),
-        start: d.start || todayISO(),
-        end: d.end || null
-    };
-    if (d.freq === 'weekly') rule.weekdays = d.weekdays.slice();
-    if (d.freq === 'monthly') rule.monthday = Number(d.monthday) || parseISO(rule.start).getDate();
+    if (d.freq === 'weekly' && (d.weekdays || []).length === 0) { new obsidian.Notice(t('Оберіть хоча б один день тижня')); return null; }
+    const start = d.start || todayISO();
+    const rule = Object.assign({ id: genId(), raw: d.raw.trim(), start, end: d.end || null }, ruleFromRecDraft(d));
+    if ((rule.freq === 'monthly' || rule.freq === 'yearly') && rule.monthMode === 'day' && !rule.monthday)
+        rule.monthday = parseISO(start).getDate();
     return rule;
 }
 
@@ -134,6 +171,9 @@ function buildHabitFields(containerEl, d, rerender) {
         new obsidian.Setting(containerEl).setName(t('Одиниці виміру'))
             .setDesc(t('напр. сторінки, км, хвилини'))
             .addText(c => c.setPlaceholder(t('сторінки')).setValue(d.unit).onChange(v => d.unit = v));
+        new obsidian.Setting(containerEl).setName(t('Ціль на день'))
+            .setDesc(t('Необов’язково — для кілець прогресу та %'))
+            .addText(c => { c.inputEl.type = 'number'; c.setPlaceholder('30').setValue(d.goal != null ? String(d.goal) : '').onChange(v => d.goal = v.trim() === '' ? '' : (Number(v) || '')); });
     }
 }
 
@@ -142,5 +182,5 @@ function validateHabit(d) {
     const prop = d.property.trim();
     if (!name) { new obsidian.Notice(t('Введіть назву')); return null; }
     if (!prop) { new obsidian.Notice(t('Введіть назву property')); return null; }
-    return { id: genId(), name, property: prop, type: d.type, unit: d.type === 'number' ? d.unit.trim() : '', emoji: (d.emoji || '').trim(), color: d.color || '' };
+    return { id: genId(), name, property: prop, type: d.type, unit: d.type === 'number' ? d.unit.trim() : '', emoji: (d.emoji || '').trim(), color: d.color || '', goal: d.type === 'number' ? (Number(d.goal) || null) : null };
 }

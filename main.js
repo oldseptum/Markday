@@ -135,7 +135,21 @@ const I18N = {
     'Звичок ще немає. Створіть їх через Ctrl+P → Звичка.': 'No habits yet. Create them via Ctrl+P → Habit.',
     'Найдовша серія': 'Longest streak', 'днів підряд': 'days in a row', 'Рекорд за день': 'Best day',
     'За місяць': 'This month', 'За рік': 'This year', 'разів': 'times', 'звичок': 'habits', 'слів': 'words', 'сторінки': 'pages',
-    'Скільки': 'How much', 'Виконано': 'Done',
+    'Скільки': 'How much', 'Виконано': 'Done', 'Не виконано': 'Not done', 'Скасовано': 'Cancelled', 'Статус': 'Status', 'Активна': 'Active', 'Виконана': 'Done', 'Скасована': 'Cancelled',
+    'Не виконана': 'Not done', 'Відмінена': 'Cancelled', 'Опис': 'Description', 'Опис, теги #, групи @…': 'Description, tags #, groups @…',
+    'Без повтору': 'No repeat', 'Щоденно': 'Daily', 'Щотижнево (поточний день)': 'Weekly (this weekday)', 'Щотижнево у робочі дні (Пн–Пт)': 'Weekly (Mon–Fri)',
+    'Щомісячно (поточне число)': 'Monthly (this day)', 'Щорічно (поточний день)': 'Yearly (this day)', 'Кастомне налаштування…': 'Custom…',
+    'Завтра': 'Tomorrow', 'Наступного понеділка': 'Next Monday', 'Дата та час': 'Date & time', 'Очистити': 'Clear',
+    'Одиниця': 'Unit', 'Інтервал': 'Interval', 'День': 'Day', 'Тиждень': 'Week', 'Місяць': 'Month', 'Рік': 'Year',
+    'За днем місяця': 'By day of month', 'За днем тижня': 'By weekday', 'Робочий день': 'Working day', 'Режим': 'Mode', 'Який': 'Which', 'Число місяця': 'Day of month',
+    'перший': 'first', 'другий': 'second', 'третій': 'third', 'четвертий': 'fourth', 'останній': 'last',
+    'Кастомне повторення': 'Custom recurrence', 'Дата виконання': 'Due date', 'Пріоритет: ': 'Priority: ', 'Повторення: ': 'Repeat: ',
+    'Щомісячні перевірки': 'Monthly checks', 'Загальна реєстрація': 'Total log', 'Щомісячна ставка реєстрації': 'Monthly rate',
+    'Поточна серія': 'Current streak', 'Щомісячне виконання': 'Monthly total', 'Загальний обсяг виконання': 'Overall total',
+    'Рахунок': 'Count', 'Ціль на день': 'Daily goal', 'Журнал звички': 'Habit log', 'Найкраща серія': 'Best streak', '← Назад': '← Back',
+    'Немає записів': 'No entries', 'Оберіть звичку': 'Select a habit', 'Необов’язково — для кілець прогресу та %': 'Optional — for progress rings & %', 'дн.': 'd', 'Нова звичка': 'New habit', 'До поточного': 'To current', 'Ціль': 'Goal',
+    'Без дати': 'No date', 'Ще': 'More', 'Відкрити нотатку': 'Open note', 'Не буде виконано': 'Won’t do', 'без групи': 'no group',
+    'Додати тег у опис': 'Add a tag in the description', 'Редагувати регулярну задачу': 'Edit recurring task', 'Зробити регулярною': 'Make recurring',
     // editor / create
     'Назва задачі': 'Task name', 'Опис (деталі)…': 'Description (details)…', 'Задача виконана': 'Task done',
     'Час (необов.)': 'Time (optional)', 'Група': 'Group', 'Enter — додати': 'Enter to add', 'Підзадачі': 'Subtasks',
@@ -239,6 +253,52 @@ function genId() { return Math.random().toString(36).slice(2, 8); }
 // ─── Recurrence engine ───────────────────────────────────────────────────────
 
 // Does a recurrence rule fire on the given Date?
+function lastDayOfMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
+function clampMonthDay(y, m, d) { return Math.min(d, lastDayOfMonth(y, m)); }
+
+// nth occurrence of a weekday (0=Mon..6=Sun) in month; nth=-1 → last. Returns day-of-month or null.
+function nthWeekdayOfMonth(y, m, wd0Mon, nth) {
+    if (nth === -1) {
+        for (let d = lastDayOfMonth(y, m); d >= 1; d--) {
+            if ((new Date(y, m, d).getDay() + 6) % 7 === wd0Mon) return d;
+        }
+        return null;
+    }
+    let count = 0;
+    for (let d = 1; d <= lastDayOfMonth(y, m); d++) {
+        if ((new Date(y, m, d).getDay() + 6) % 7 === wd0Mon && ++count === nth) return d;
+    }
+    return null;
+}
+
+// first/last working day (Mon–Fri) of a month → day-of-month
+function workdayOfMonth(y, m, which) {
+    if (which === 'last') {
+        for (let d = lastDayOfMonth(y, m); d >= 1; d--) {
+            if ((new Date(y, m, d).getDay() + 6) % 7 <= 4) return d;
+        }
+    } else {
+        for (let d = 1; d <= lastDayOfMonth(y, m); d++) {
+            if ((new Date(y, m, d).getDay() + 6) % 7 <= 4) return d;
+        }
+    }
+    return null;
+}
+
+// Does `date` match the rule's month-mode within month (y,m)? (shared by monthly + yearly)
+function matchesMonthMode(rule, date, y, m, fallbackDay) {
+    const mode = rule.monthMode || 'day';
+    if (mode === 'weekday') {
+        const day = nthWeekdayOfMonth(y, m, rule.weekday || 0, rule.nth || 1);
+        return day != null && date.getDate() === day;
+    }
+    if (mode === 'workday') {
+        const day = workdayOfMonth(y, m, rule.which || 'first');
+        return day != null && date.getDate() === day;
+    }
+    return date.getDate() === clampMonthDay(y, m, rule.monthday || fallbackDay);
+}
+
 function occursOn(rule, date) {
     const start = parseISO(rule.start);
     if (daysBetween(start, date) < 0) return false;
@@ -257,16 +317,19 @@ function occursOn(rule, date) {
             return weeks % interval === 0;
         }
         case 'monthly': {
-            const md = rule.monthday || start.getDate();
-            if (date.getDate() !== md) return false;
             const months = (date.getFullYear() - start.getFullYear()) * 12
                 + (date.getMonth() - start.getMonth());
-            return months >= 0 && months % interval === 0;
+            if (months < 0 || months % interval !== 0) return false;
+            return matchesMonthMode(rule, date, date.getFullYear(), date.getMonth(), start.getDate());
         }
         case 'yearly': {
-            if (date.getDate() !== start.getDate() || date.getMonth() !== start.getMonth()) return false;
+            const ym = (rule.month != null) ? rule.month : start.getMonth();
+            if (date.getMonth() !== ym) return false;
             const years = date.getFullYear() - start.getFullYear();
-            return years >= 0 && years % interval === 0;
+            if (years < 0 || years % interval !== 0) return false;
+            // legacy rules (no monthMode) keep exact start day-of-month
+            if (!rule.monthMode) return date.getDate() === start.getDate();
+            return matchesMonthMode(rule, date, date.getFullYear(), ym, start.getDate());
         }
     }
     return false;
@@ -274,14 +337,29 @@ function occursOn(rule, date) {
 
 function describeRule(rule) {
     const i = rule.interval || 1;
-    const ev = n => LANG === 'en' ? `every ${i} ${n}` : `кожні ${i} ${n}`;
-    if (rule.freq === 'daily') return i === 1 ? t('щодня') : ev(LANG === 'en' ? 'days' : 'дн.');
+    const en = LANG === 'en';
+    const ev = n => en ? `every ${i} ${n}` : `кожні ${i} ${n}`;
+    const ord = { '1': en ? 'first' : 'перший', '2': en ? 'second' : 'другий', '3': en ? 'third' : 'третій',
+                  '4': en ? 'fourth' : 'четвертий', '-1': en ? 'last' : 'останній' };
+    const monthModePart = () => {
+        const mode = rule.monthMode || 'day';
+        if (mode === 'weekday') return `${ord[String(rule.nth || 1)]} ${WD_FULL[rule.weekday || 0]}`;
+        if (mode === 'workday') return rule.which === 'last'
+            ? (en ? 'last working day' : 'останній робочий день')
+            : (en ? 'first working day' : 'перший робочий день');
+        return en ? `day ${rule.monthday || '?'}` : `${rule.monthday || '?'} числа`;
+    };
+    if (rule.freq === 'daily') return i === 1 ? t('щодня') : ev(en ? 'days' : 'дн.');
     if (rule.freq === 'weekly') {
-        const wd = (rule.weekdays || []).slice().sort().map(d => WD_UA[d]).join(', ');
-        return (i === 1 ? t('щотижня') : ev(LANG === 'en' ? 'weeks' : 'тиж.')) + (wd ? ` (${wd})` : '');
+        const wd = (rule.weekdays || []).slice().sort((a, b) => a - b).map(d => WD_UA[d]).join(', ');
+        return (i === 1 ? t('щотижня') : ev(en ? 'weeks' : 'тиж.')) + (wd ? ` (${wd})` : '');
     }
-    if (rule.freq === 'monthly') return (i === 1 ? t('щомісяця') : ev(LANG === 'en' ? 'months' : 'міс.')) + (LANG === 'en' ? `, day ${rule.monthday || '?'}` : ` ${rule.monthday || '?'} числа`);
-    if (rule.freq === 'yearly') return i === 1 ? t('щороку') : ev(LANG === 'en' ? 'years' : 'р.');
+    if (rule.freq === 'monthly') return (i === 1 ? t('щомісяця') : ev(en ? 'months' : 'міс.')) + ', ' + monthModePart();
+    if (rule.freq === 'yearly') {
+        const base = i === 1 ? t('щороку') : ev(en ? 'years' : 'р.');
+        if (rule.month == null) return base;
+        return `${base} — ${monthModePart()} ${MONTHS_GEN[rule.month]}`;
+    }
     return '';
 }
 
@@ -358,7 +436,7 @@ function habitList(settings) {
     const arr = (settings.habits || []).slice();
     const wc = settings.wordCount;
     if (wc && wc.enabled) {
-        arr.push({ id: '__words', name: wc.name || 'Написано слів', emoji: wc.emoji || '✍️', color: wc.color || '', unit: 'слів', type: 'number', auto: 'words' });
+        arr.push({ id: '__words', name: wc.name || 'Написано слів', emoji: wc.emoji || '✍️', color: wc.color || '', unit: 'слів', type: 'number', auto: 'words', goal: wc.goal || null });
     }
     return arr;
 }
@@ -373,6 +451,19 @@ async function getHabitValue(app, isoDate, habit) {
     const v = readFrontmatter(app, isoDate)[habit.property];
     if (habit.type === 'bool') return (v === true || v === 'true') ? 1 : 0;
     return Number(v) || 0;
+}
+
+// A day's completion fraction (0..1) for a habit
+function habitProgress(value, habit) {
+    if (habit.type === 'bool') return value > 0 ? 1 : 0;
+    if (habit.goal > 0) return Math.max(0, Math.min(1, value / habit.goal));
+    return value > 0 ? 1 : 0;
+}
+// Whether a day counts as "done" (goal met, or any value when no goal)
+function habitDone(value, habit) {
+    if (habit.type === 'bool') return value > 0;
+    if (habit.goal > 0) return value >= habit.goal;
+    return value > 0;
 }
 
 // ─── Daily Notes integration ─────────────────────────────────────────────────
@@ -453,10 +544,11 @@ async function ensureFolders(app, filePath) {
 // ─── Task parsing ────────────────────────────────────────────────────────────
 
 function parseTaskLine(line, lineNum) {
-    const m = line.match(/^(\s*)- \[(x| )\] (.*)$/);
+    const m = line.match(/^(\s*)- \[(x| |-)\] (.*)$/);
     if (!m) return null;
 
     const done = m[2] === 'x';
+    const cancelled = m[2] === '-';
     let body = m[3];
 
     // trailing block ids: ^rc-<id> (recurrence rule) and ^tcd-<id> (description heading)
@@ -499,7 +591,7 @@ function parseTaskLine(line, lineNum) {
         .replace(/\s{2,}/g, ' ')
         .trim();
 
-    return { done, text, tags, group, priority, start, end, recId, descId, line: lineNum };
+    return { done, cancelled, text, tags, group, priority, start, end, recId, descId, line: lineNum };
 }
 
 // Find a task's description (content under the `^tcd-<id>` heading); returns {text, headingLine, endLine}
@@ -635,7 +727,17 @@ class ConfirmModal extends obsidian.Modal {
 }
 
 function setCheckbox(line, done) {
-    return line.replace(/^(\s*)- \[(x| )\]/, done ? '$1- [x]' : '$1- [ ]');
+    return line.replace(/^(\s*)- \[(x| |-)\]/, done ? '$1- [x]' : '$1- [ ]');
+}
+
+// Set a task line's status mark: 'done' → [x], 'cancelled' → [-], 'todo' → [ ]
+function statusMark(status) { return status === 'done' ? 'x' : status === 'cancelled' ? '-' : ' '; }
+
+async function setTaskStatus(app, file, lineNum, status) {
+    const content = await app.vault.read(file);
+    const lines = content.split('\n');
+    lines[lineNum] = lines[lineNum].replace(/^(\s*)- \[(x| |-)\]/, `$1- [${statusMark(status)}]`);
+    await app.vault.modify(file, lines.join('\n'));
 }
 
 async function toggleTask(app, file, lineNum, done) {
@@ -658,8 +760,8 @@ async function toggleTaskCascade(app, file, task, done) {
 function syncParent(lines, parentLineNum) {
     let total = 0, done = 0;
     for (let i = parentLineNum + 1; i < lines.length; i++) {
-        const cb = lines[i].match(/^(\s+)- \[(x| )\] /);
-        if (cb) { total++; if (cb[2] === 'x') done++; continue; }
+        const cb = lines[i].match(/^(\s+)- \[(x| |-)\] /);
+        if (cb) { if (cb[2] === '-') continue; total++; if (cb[2] === 'x') done++; continue; }
         if (lines[i].trim() === '') continue;          // blank inside block
         if (/^\s+- /.test(lines[i])) continue;         // indented comment
         break;                                          // top-level content → end of children
@@ -712,7 +814,8 @@ async function rewriteTaskLine(app, file, lineNum, task) {
     const content = await app.vault.read(file);
     const lines = content.split('\n');
     const indent = (lines[lineNum].match(/^(\s*)/) || ['', ''])[1];
-    lines[lineNum] = `${indent}- [${task.done ? 'x' : ' '}] ${serializeTaskBody(task)}${taskMarkers(task)}`;
+    const mark = task.cancelled ? '-' : task.done ? 'x' : ' ';
+    lines[lineNum] = `${indent}- [${mark}] ${serializeTaskBody(task)}${taskMarkers(task)}`;
     await app.vault.modify(file, lines.join('\n'));
 }
 
@@ -823,9 +926,11 @@ async function insertBlockUnderHeading(app, file, blockLines, settings) {
         if (m && m[1].length === level && m[2].toLowerCase() === headingText.toLowerCase()) { idx = i; break; }
     }
 
+    let insertedAt;
     if (idx === -1) {
         if (lines.length && lines[lines.length - 1].trim() !== '') lines.push('');
         lines.push(headingLine, ...blockLines);
+        insertedAt = lines.length - blockLines.length;
     } else {
         let end = lines.length;
         for (let i = idx + 1; i < lines.length; i++) {
@@ -835,14 +940,16 @@ async function insertBlockUnderHeading(app, file, blockLines, settings) {
         // after the last top-level task in the section…
         let insertAt = idx + 1;
         for (let i = idx + 1; i < end; i++) {
-            if (/^\s*- \[(x| )\]/.test(lines[i]) && /^\S/.test(lines[i])) insertAt = i + 1;
+            if (/^\s*- \[(x| |-)\]/.test(lines[i]) && /^\S/.test(lines[i])) insertAt = i + 1;
         }
         // …and past that task's indented children
         while (insertAt < end && /^\s+- /.test(lines[insertAt])) insertAt++;
         lines.splice(insertAt, 0, ...blockLines);
+        insertedAt = insertAt;
     }
 
     await app.vault.modify(file, lines.join('\n'));
+    return insertedAt;
 }
 
 // Move a task (with its children) to another day's note, updating its time
@@ -857,14 +964,16 @@ async function moveTaskToDay(app, task, destISO, newStart, newEnd, settings) {
 
     const indent = (block[0].match(/^(\s*)/) || ['', ''])[1];
     const marker = taskMarkers(task);
+    const mark = task.cancelled ? '-' : task.done ? 'x' : ' ';
     const updated = { ...task, start: newStart, end: newEnd };
-    block[0] = `${indent}- [${task.done ? 'x' : ' '}] ${serializeTaskBody(updated)}${marker}`;
+    block[0] = `${indent}- [${mark}] ${serializeTaskBody(updated)}${marker}`;
 
     lines.splice(task.line, end - task.line);
     await app.vault.modify(srcFile, lines.join('\n'));
 
     const destFile = await getOrCreateDateFile(app, destISO);
-    await insertBlockUnderHeading(app, destFile, block, settings);
+    const line = await insertBlockUnderHeading(app, destFile, block, settings);
+    return { file: destFile, line };
 }
 
 // ─── Reusable creation forms (shared by settings tab & quick-create modal) ─────
@@ -924,15 +1033,34 @@ function buildChips(container, values, options, single, placeholder) {
 }
 
 function newTaskDraft() { return { text: '', date: todayISO(), tags: '', group: '' }; }
-function newRecurrenceDraft() { return { raw: '', freq: 'daily', interval: 1, weekdays: [], monthday: '', start: todayISO(), end: '' }; }
-function newHabitDraft() { return { name: '', property: '', unit: '', type: 'number', emoji: '', color: '#9aa0a6' }; }
+function newRecurrenceDraft() { return { raw: '', freq: 'daily', interval: 1, weekdays: [], monthMode: 'day', monthday: '', nth: 1, weekday: 0, which: 'first', month: new Date().getMonth(), start: todayISO(), end: '' }; }
+
+// Map a recurrence draft → schedule fields of a rule (no id/raw/start/end). Shared by
+// the create flow, the settings edit modal and the live preview.
+function ruleFromRecDraft(d) {
+    const rule = { freq: d.freq, interval: Math.max(1, Number(d.interval) || 1) };
+    if (d.freq === 'weekly') rule.weekdays = (d.weekdays || []).slice();
+    if (d.freq === 'monthly' || d.freq === 'yearly') {
+        rule.monthMode = d.monthMode || 'day';
+        if (rule.monthMode === 'day') rule.monthday = Number(d.monthday) || null;
+        else if (rule.monthMode === 'weekday') { rule.nth = Number(d.nth) || 1; rule.weekday = Number(d.weekday) || 0; }
+        else if (rule.monthMode === 'workday') rule.which = d.which || 'first';
+    }
+    if (d.freq === 'yearly') rule.month = (d.month != null && d.month !== '') ? Number(d.month) : new Date().getMonth();
+    return rule;
+}
+function newHabitDraft() { return { name: '', property: '', unit: '', type: 'number', emoji: '', color: '#9aa0a6', goal: '' }; }
 
 // Render recurrence fields into `containerEl`. `rerender` is called when the set of
 // visible fields changes (frequency / weekday toggles) so the caller can rebuild.
-function buildRecurrenceFields(containerEl, d, rerender) {
-    new obsidian.Setting(containerEl).setName(t('Назва'))
-        .setDesc(t('Формат задачі: "14:00 Полити квіти #дім !med"'))
-        .addText(c => c.setPlaceholder(t('напр. Полити квіти #дім')).setValue(d.raw).onChange(v => d.raw = v));
+// opts.hideRaw → omit the task-text field; opts.hideDates → omit start/end (create flow).
+function buildRecurrenceFields(containerEl, d, rerender, opts) {
+    opts = opts || {};
+    if (!opts.hideRaw) {
+        new obsidian.Setting(containerEl).setName(t('Назва'))
+            .setDesc(t('Формат задачі: "14:00 Полити квіти #дім !med"'))
+            .addText(c => c.setPlaceholder(t('напр. Полити квіти #дім')).setValue(d.raw).onChange(v => d.raw = v));
+    }
 
     new obsidian.Setting(containerEl).setName(t('Повторювати'))
         .addDropdown(dd => {
@@ -956,30 +1084,48 @@ function buildRecurrenceFields(containerEl, d, rerender) {
         }));
     }
 
-    if (d.freq === 'monthly') {
-        new obsidian.Setting(containerEl).setName(t('Число місяця'))
-            .addText(c => c.setPlaceholder('1-31').setValue(String(d.monthday || '')).onChange(v => d.monthday = Number(v) || ''));
+    if (d.freq === 'yearly') {
+        new obsidian.Setting(containerEl).setName(t('Місяць'))
+            .addDropdown(dd => { MONTHS_UA.forEach((mn, i) => dd.addOption(String(i), mn)); dd.setValue(String(d.month != null ? d.month : new Date().getMonth())).onChange(v => d.month = Number(v)); });
     }
 
-    new obsidian.Setting(containerEl).setName(t('Початок'))
-        .addText(c => { c.inputEl.type = 'date'; c.setValue(d.start).onChange(v => d.start = v); });
-    new obsidian.Setting(containerEl).setName(t('Кінець (необов.)'))
-        .addText(c => { c.inputEl.type = 'date'; c.setValue(d.end).onChange(v => d.end = v); });
+    if (d.freq === 'monthly' || d.freq === 'yearly') {
+        new obsidian.Setting(containerEl).setName(t('Режим'))
+            .addDropdown(dd => {
+                dd.addOption('day', t('За днем місяця')).addOption('weekday', t('За днем тижня')).addOption('workday', t('Робочий день'));
+                dd.setValue(d.monthMode || 'day').onChange(v => { d.monthMode = v; rerender(); });
+            });
+        const mode = d.monthMode || 'day';
+        if (mode === 'day') {
+            new obsidian.Setting(containerEl).setName(t('Число місяця'))
+                .addText(c => c.setPlaceholder('1-31').setValue(String(d.monthday || '')).onChange(v => d.monthday = Number(v) || ''));
+        } else if (mode === 'weekday') {
+            new obsidian.Setting(containerEl).setName(t('Який'))
+                .addDropdown(dd => { [['1', t('перший')], ['2', t('другий')], ['3', t('третій')], ['4', t('четвертий')], ['-1', t('останній')]].forEach(o => dd.addOption(o[0], o[1])); dd.setValue(String(d.nth || 1)).onChange(v => d.nth = Number(v)); })
+                .addDropdown(dd => { WD_UA.forEach((w, i) => dd.addOption(String(i), w)); dd.setValue(String(d.weekday || 0)).onChange(v => d.weekday = Number(v)); });
+        } else {
+            new obsidian.Setting(containerEl).setName(t('Робочий день'))
+                .addDropdown(dd => { dd.addOption('first', t('перший')).addOption('last', t('останній')); dd.setValue(d.which || 'first').onChange(v => d.which = v); });
+        }
+    }
+
+    if (!opts.hideDates) {
+        new obsidian.Setting(containerEl).setName(t('Початок'))
+            .addText(c => { c.inputEl.type = 'date'; c.setValue(d.start).onChange(v => d.start = v); });
+        new obsidian.Setting(containerEl).setName(t('Кінець (необов.)'))
+            .addText(c => { c.inputEl.type = 'date'; c.setValue(d.end).onChange(v => d.end = v); });
+    }
+
+    containerEl.createEl('div', { cls: 'tc-rec-preview', text: '↻ ' + describeRule(ruleFromRecDraft(d)) });
 }
 
 function validateRecurrence(d) {
     if (!d.raw.trim()) { new obsidian.Notice(t('Введіть текст задачі')); return null; }
-    if (d.freq === 'weekly' && d.weekdays.length === 0) { new obsidian.Notice(t('Оберіть хоча б один день тижня')); return null; }
-    const rule = {
-        id: genId(),
-        raw: d.raw.trim(),
-        freq: d.freq,
-        interval: Math.max(1, Number(d.interval) || 1),
-        start: d.start || todayISO(),
-        end: d.end || null
-    };
-    if (d.freq === 'weekly') rule.weekdays = d.weekdays.slice();
-    if (d.freq === 'monthly') rule.monthday = Number(d.monthday) || parseISO(rule.start).getDate();
+    if (d.freq === 'weekly' && (d.weekdays || []).length === 0) { new obsidian.Notice(t('Оберіть хоча б один день тижня')); return null; }
+    const start = d.start || todayISO();
+    const rule = Object.assign({ id: genId(), raw: d.raw.trim(), start, end: d.end || null }, ruleFromRecDraft(d));
+    if ((rule.freq === 'monthly' || rule.freq === 'yearly') && rule.monthMode === 'day' && !rule.monthday)
+        rule.monthday = parseISO(start).getDate();
     return rule;
 }
 
@@ -1003,6 +1149,9 @@ function buildHabitFields(containerEl, d, rerender) {
         new obsidian.Setting(containerEl).setName(t('Одиниці виміру'))
             .setDesc(t('напр. сторінки, км, хвилини'))
             .addText(c => c.setPlaceholder(t('сторінки')).setValue(d.unit).onChange(v => d.unit = v));
+        new obsidian.Setting(containerEl).setName(t('Ціль на день'))
+            .setDesc(t('Необов’язково — для кілець прогресу та %'))
+            .addText(c => { c.inputEl.type = 'number'; c.setPlaceholder('30').setValue(d.goal != null ? String(d.goal) : '').onChange(v => d.goal = v.trim() === '' ? '' : (Number(v) || '')); });
     }
 }
 
@@ -1011,90 +1160,22 @@ function validateHabit(d) {
     const prop = d.property.trim();
     if (!name) { new obsidian.Notice(t('Введіть назву')); return null; }
     if (!prop) { new obsidian.Notice(t('Введіть назву property')); return null; }
-    return { id: genId(), name, property: prop, type: d.type, unit: d.type === 'number' ? d.unit.trim() : '', emoji: (d.emoji || '').trim(), color: d.color || '' };
+    return { id: genId(), name, property: prop, type: d.type, unit: d.type === 'number' ? d.unit.trim() : '', emoji: (d.emoji || '').trim(), color: d.color || '', goal: d.type === 'number' ? (Number(d.goal) || null) : null };
 }
 
-// ─── Task Editor Modal ───────────────────────────────────────────────────────
+// ─── Task Editor Modal (4-layer card; saves live, no Save/Cancel buttons) ──────
 
 class TaskEditorModal extends obsidian.Modal {
     constructor(app, task, onClose) {
         super(app);
         this.file = task.file;
-        this.line = task.line;       // parent line is stable for the modal's lifetime
+        this.line = task.line;       // stays valid within a file for the modal's lifetime
+        this.date = task.date;       // current day (for the date picker + cross-day move)
         this.task = task;
         this.onCloseCb = onClose;
         this.deleted = false;
-    }
-
-    async reload() {
-        const content = await this.app.vault.read(this.file);
-        const found = parseTasks(content).find(t => t.line === this.line);
-        this.task = found ? { ...found, file: this.file } : null;
-    }
-
-    onOpen() { this.renderAll(); }
-
-    async renderAll() {
-        await this.reload();
-        if (!this.task) { this.close(); return; }
-
-        const tags = collectTags(this.app);
-        const groups = await collectGroups(this.app, this.plugin ? this.plugin.settings : { colors: { groups: [] } });
-
-        const { contentEl } = this;
-        contentEl.empty();
-        contentEl.addClass('tc-editor');
-
-        // editable title (replaces the "Edit task" heading)
-        const titleInput = contentEl.createEl('input', { cls: 'tc-title-input' });
-        titleInput.placeholder = t('Назва задачі');
-        titleInput.value = this.task.text || '';
-        this.titleInput = titleInput;
-
-        // description directly under the title — fixed size, no resize
-        const descArea = contentEl.createEl('textarea', { cls: 'tc-editor-desc' });
-        descArea.rows = 4;
-        descArea.placeholder = t('Опис (деталі)…');
-        descArea.value = this.task.desc || '';
-        this.descInput = descArea;
-
-        new obsidian.Setting(contentEl).setName(t('Задача виконана'))
-            .addToggle(tg => { this.doneToggle = tg; tg.setValue(!!this.task.done); });
-
-        new obsidian.Setting(contentEl).setName(t('Пріоритет'))
-            .addDropdown(dd => {
-                this.prioSel = dd;
-                dd.addOption('', '—');
-                priorityKeys.forEach(k => dd.addOption(k, k));
-                dd.setValue(this.task.priority || '');
-            });
-
-        new obsidian.Setting(contentEl).setName(t('Час (необов.)'))
-            .addText(c => { this.startInput = c.inputEl; c.setPlaceholder('09:00').setValue(this.task.start || ''); })
-            .addText(c => { this.endInput = c.inputEl; c.setPlaceholder('10:30').setValue(this.task.end || ''); });
-
-        new obsidian.Setting(contentEl).setName(t('Група')).setDesc(t('Enter — додати'))
-            .then(s => { this.groupChips = buildChips(s.controlEl, this.task.group ? [this.task.group] : [], groups, true, t('група')); });
-
-        new obsidian.Setting(contentEl).setName(t('Теги')).setDesc(t('Enter — додати'))
-            .then(s => { this.tagChips = buildChips(s.controlEl, this.task.tags || [], tags, false, t('+ тег')); });
-
-        this.subWrap = contentEl.createEl('div');
-        this.renderSubtasks();
-
-        const footer = contentEl.createEl('div', { cls: 'tc-editor-footer' });
-        const trash = footer.createEl('button', { cls: 'clickable-icon tc-btn-danger' });
-        obsidian.setIcon(trash, 'trash');
-        trash.setAttribute('aria-label', 'Видалити задачу');
-        trash.onclick = async () => {
-            await removeTaskBlock(this.app, this.file, this.task);
-            this.deleted = true;
-            this.close();
-        };
-
-        const right = footer.createEl('div', { cls: 'tc-modal-btns' });
-        right.createEl('button', { text: t('Відхилити зміни') }).onclick = () => this.close();
-        right.createEl('button', { text: t('Зберегти зміни'), cls: 'mod-cta' }).onclick = async () => { await this.applyFields(); this.close(); };
+        this._lineSave = obsidian.debounce(() => this.applyLine(), 400, false);
+        this._descSave = obsidian.debounce(() => this.saveDescription(), 500, false);
     }
 
     get plugin() {
@@ -1102,9 +1183,189 @@ class TaskEditorModal extends obsidian.Modal {
             || { settings: DEFAULT_SETTINGS };
     }
 
+    async reload() {
+        const content = await this.app.vault.read(this.file);
+        const found = parseTasks(content).find(t => t.line === this.line);
+        this.task = found ? { ...found, file: this.file, date: this.date } : null;
+    }
+
+    onOpen() {
+        // close only via Esc: hide the × button and ignore clicks on the dimmed backdrop
+        this.modalEl.addClass('tc-noclose');
+        const container = this.modalEl.closest('.modal-container');
+        if (container) for (const ev of ['mousedown', 'click']) container.addEventListener(ev, e => { if (!this.modalEl.contains(e.target)) e.stopImmediatePropagation(); }, true);
+        this.renderAll();
+    }
+
+    // ── live persistence ─────────────────────────────────────────────────────
+    async applyLine() { if (!this.deleted && this.task) await rewriteTaskLine(this.app, this.file, this.line, this.task); }
+    async saveDescription() { if (!this.deleted && this.task && this.descInput) await setDescription(this.app, this.file, this.task, this.descInput.value, this.plugin.settings); }
+    async setStatus(status) {
+        this.task.done = status === 'done';
+        this.task.cancelled = status === 'cancelled';
+        await this.applyLine();
+        this.renderAll();
+    }
+
+    dateLabel() {
+        const time = this.task.start ? ' · ' + (this.task.end ? `${this.task.start}–${this.task.end}` : this.task.start) : '';
+        return (this.date ? humanDate(this.date) : t('Без дати')) + time;
+    }
+
+    openDatePicker() {
+        const draft = { date: this.date, start: this.task.start, end: this.task.end };
+        const apply = async () => {
+            if (draft.date && draft.date !== this.date) {
+                const loc = await moveTaskToDay(this.app, this.task, draft.date, draft.start || null, draft.end || null, this.plugin.settings);
+                this.file = loc.file; this.line = loc.line; this.date = draft.date;
+            } else {
+                this.task.start = draft.start || null;
+                this.task.end = (this.task.start && draft.end) ? draft.end : null;
+                await this.applyLine();
+            }
+            this.renderAll();
+        };
+        new DatePickerModal(this.app, draft, apply).open();
+    }
+
+    async renderAll() {
+        await this.reload();
+        if (!this.task) { this.close(); return; }
+        const tags = collectTags(this.app);
+        const groups = await collectGroups(this.app, this.plugin.settings);
+        this._groups = groups;
+
+        const { contentEl } = this;
+        contentEl.empty();
+        contentEl.addClass('tc-editor', 'tc-task-edit');
+
+        // ── Layer 1: status checkbox · date/time · priority ──────────────────
+        const l1 = contentEl.createEl('div', { cls: 'tc-te-l1' });
+        const cb = makeStatusCheckbox(l1, this.task, checked => this.setStatus(checked ? 'done' : 'todo'), 'tc-te-check');
+        cb.addEventListener('contextmenu', e => {
+            e.preventDefault();
+            const menu = new obsidian.Menu();
+            menu.addItem(it => it.setTitle(this.task.done ? t('Не виконано') : t('Виконано')).onClick(() => this.setStatus(this.task.done ? 'todo' : 'done')));
+            menu.addItem(it => it.setTitle(t('Не буде виконано')).setChecked(!!this.task.cancelled).onClick(() => this.setStatus(this.task.cancelled ? 'todo' : 'cancelled')));
+            menu.showAtMouseEvent(e);
+        });
+
+        const dateBtn = l1.createEl('button', { cls: 'tc-te-date' });
+        const dic = dateBtn.createEl('span', { cls: 'tc-te-date-ic' }); obsidian.setIcon(dic, 'calendar');
+        dateBtn.createEl('span', { cls: 'tc-te-date-txt', text: this.dateLabel() });
+        dateBtn.onclick = () => this.openDatePicker();
+
+        const prio = l1.createEl('button', { cls: 'tc-te-prio clickable-icon' });
+        obsidian.setIcon(prio, 'alert-circle');
+        prio.setAttribute('aria-label', t('Пріоритет'));
+        if (this.task.priority) { prio.addClass('is-set'); prio.style.color = prioColor(this.task.priority); }
+        prio.onclick = e => {
+            const menu = new obsidian.Menu();
+            menu.addItem(it => it.setTitle('—').setChecked(!this.task.priority).onClick(async () => { this.task.priority = null; await this.applyLine(); this.renderAll(); }));
+            priorityKeys.forEach(k => menu.addItem(it => it.setTitle(k).setChecked(this.task.priority === k).onClick(async () => { this.task.priority = k; await this.applyLine(); this.renderAll(); })));
+            menu.showAtMouseEvent(e);
+        };
+
+        // ── Layer 2: editable title ──────────────────────────────────────────
+        const titleInput = contentEl.createEl('input', { cls: 'tc-title-input tc-te-title' });
+        titleInput.placeholder = t('Назва задачі');
+        titleInput.value = this.task.text || '';
+        titleInput.addEventListener('input', () => { this.task.text = titleInput.value; this._lineSave(); });
+        titleInput.addEventListener('blur', () => { this.task.text = titleInput.value.trim(); this.applyLine(); });
+
+        // ── Layer 3: description (smart #/@) · subtasks · tag chips ───────────
+        const l3 = contentEl.createEl('div', { cls: 'tc-te-l3' });
+        const ta = l3.createEl('textarea', { cls: 'tc-editor-desc' });
+        ta.rows = 4;
+        ta.placeholder = t('Опис, теги #, групи @…');
+        ta.value = this.task.desc || '';
+        this.descInput = ta;
+        ta.addEventListener('input', () => this._descSave());
+        ta.addEventListener('blur', () => this.saveDescription());
+        attachInlineTagAutocomplete(ta, tags, groups, (sig, val) => {
+            if (sig === '#') { if (!this.task.tags.includes(val)) this.task.tags.push(val); this.drawTagChips(); }
+            else { this.task.group = val; this.renderGroupBadge(); }
+            this.applyLine();
+        });
+
+        this.subWrap = l3.createEl('div', { cls: 'tc-te-subs' });
+        this.renderSubtasks();
+
+        this.tagChipsEl = l3.createEl('div', { cls: 'tc-chips tc-te-tags' });
+        this.drawTagChips();
+
+        // ── Layer 4: group badge · more menu ─────────────────────────────────
+        const l4 = contentEl.createEl('div', { cls: 'tc-te-l4' });
+        this.groupSlot = l4.createEl('div', { cls: 'tc-te-groupslot' });
+        this.renderGroupBadge();
+        const more = l4.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(more, 'more-horizontal');
+        more.setAttribute('aria-label', t('Ще'));
+        more.onclick = e => this.moreMenu(e);
+    }
+
+    drawTagChips() {
+        this.tagChipsEl.empty();
+        for (const tg of (this.task.tags || [])) {
+            const chip = this.tagChipsEl.createEl('span', { cls: 'tc-chip' });
+            chip.createSpan({ text: '#' + tg });
+            const col = COLORS.tags[tg]; if (col) tintBadge(chip, col);
+            chip.createEl('span', { text: '✕', cls: 'tc-chip-x' }).onclick = () => { this.task.tags = this.task.tags.filter(x => x !== tg); this.applyLine(); this.drawTagChips(); };
+        }
+        const add = this.tagChipsEl.createEl('span', { cls: 'tc-chip tc-chip-add', text: '+' });
+        add.setAttribute('aria-label', t('Додати тег у опис'));
+        add.onclick = () => { this.descInput.focus(); };
+    }
+
+    renderGroupBadge() {
+        this.groupSlot.empty();
+        const badge = this.groupSlot.createEl('button', { cls: this.task.group ? 'tc-te-group' : 'tc-te-group tc-te-nogroup' });
+        badge.setText(this.task.group ? '@' + this.task.group : t('без групи'));
+        if (this.task.group) tintBadge(badge, COLORS.groups[this.task.group] || autoColor(this.task.group));
+        badge.onclick = e => {
+            const menu = new obsidian.Menu();
+            menu.addItem(it => it.setTitle(t('без групи')).setChecked(!this.task.group).onClick(async () => { this.task.group = null; await this.applyLine(); this.renderGroupBadge(); }));
+            for (const g of (this._groups || [])) menu.addItem(it => it.setTitle('@' + g).setChecked(this.task.group === g).onClick(async () => { this.task.group = g; await this.applyLine(); this.renderGroupBadge(); }));
+            menu.showAtMouseEvent(e);
+        };
+    }
+
+    moreMenu(e) {
+        const menu = new obsidian.Menu();
+        menu.addItem(it => it.setTitle(t('Відкрити нотатку')).setIcon('file-text').onClick(() => { openDay(this.app, this.date); this.close(); }));
+        if (this.task.recId) {
+            menu.addItem(it => it.setTitle(t('Редагувати регулярну задачу')).setIcon('repeat').onClick(() => {
+                const rule = (this.plugin.settings.recurrences || []).find(r => r.id === this.task.recId);
+                if (rule) new RecurrenceEditModal(this.app, this.plugin, rule, () => this.plugin.refreshViews && this.plugin.refreshViews()).open();
+            }));
+        } else {
+            menu.addItem(it => it.setTitle(t('Зробити регулярною')).setIcon('repeat').onClick(() => this.convertToRecurring()));
+        }
+        menu.addSeparator();
+        menu.addItem(it => it.setTitle(t('Видалити')).setIcon('trash').onClick(async () => {
+            await removeTaskBlock(this.app, this.file, this.task);
+            this.deleted = true;
+            this.close();
+        }));
+        menu.showAtMouseEvent(e);
+    }
+
+    convertToRecurring() {
+        const rec = { freq: 'daily', interval: 1, weekdays: [], monthMode: 'day', monthday: '', nth: 1, weekday: 0, which: 'first', month: new Date().getMonth() };
+        new RecurrenceCustomModal(this.app, rec, async () => {
+            const start = this.date || todayISO();
+            const rule = Object.assign({ id: genId(), raw: serializeTaskBody(this.task), start, end: null }, ruleFromRecDraft(rec));
+            if ((rule.freq === 'monthly' || rule.freq === 'yearly') && rule.monthMode === 'day' && !rule.monthday) rule.monthday = parseISO(start).getDate();
+            this.plugin.settings.recurrences.push(rule);
+            await this.plugin.saveSettings();
+            await removeTaskBlock(this.app, this.file, this.task);   // one-off line removed; now shows as a virtual recurrence
+            this.deleted = true;
+            if (this.plugin.refreshViews) this.plugin.refreshViews();
+            this.close();
+        }).open();
+    }
+
     renderSubtasks() {
         this.subWrap.empty();
-        this.subWrap.createEl('h4', { text: t('Підзадачі') });
         for (const s of this.task.subtasks) {
             const r = this.subWrap.createEl('div', { cls: 'tc-subrow' });
             makeCheckbox(r, s.done, async checked => {
@@ -1130,25 +1391,16 @@ class TaskEditorModal extends obsidian.Modal {
         });
     }
 
-    async applyFields() {
-        if (this.deleted || !this.task) return;
-        const settings = this.plugin.settings;
-        this.task.text = this.titleInput.value.trim();
-        this.task.done = this.doneToggle.getValue();
-        this.task.priority = this.prioSel.getValue() || null;
-        const s = this.startInput.value.trim();
-        const e = this.endInput.value.trim();
-        this.task.start = s || null;
-        this.task.end = (this.task.start && e) ? e : null;
-        this.task.group = this.groupChips.get()[0] || null;
-        this.task.tags = this.tagChips.get();
-        await setDescription(this.app, this.file, this.task, this.descInput.value, settings);
-        await rewriteTaskLine(this.app, this.file, this.line, this.task);
-    }
-
     onClose() {
+        const text = this.descInput ? this.descInput.value : null;
         this.contentEl.empty();
-        if (this.onCloseCb) this.onCloseCb();
+        (async () => {
+            if (!this.deleted && this.task) {
+                await this.applyLine();
+                if (text != null) await setDescription(this.app, this.file, this.task, text, this.plugin.settings);
+            }
+            if (this.onCloseCb) this.onCloseCb();
+        })();
     }
 }
 
@@ -1156,8 +1408,12 @@ class TaskEditorModal extends obsidian.Modal {
 
 function newComposerDraft(date) {
     return { text: '', date: date || todayISO(), start: null, end: null, priority: null, tags: [], group: null,
-             rec: { freq: 'none', interval: 1, weekdays: [] }, _tagChips: null, _groupChips: null };
+             status: 'todo', descText: '',
+             rec: { freq: 'none', interval: 1, weekdays: [], monthMode: 'day', monthday: '', nth: 1, weekday: 0, which: 'first', month: new Date().getMonth() },
+             _tagChips: null, _groupChips: null };
 }
+
+function nextMonday() { const d = new Date(); return addDays(d, 7 - ((d.getDay() + 6) % 7)); }
 
 function composeTaskRaw(d) {
     const parts = [];
@@ -1176,17 +1432,30 @@ function syncDraftChips(d) {
 
 async function createFromDraft(app, plugin, d) {
     syncDraftChips(d);
+    // sweep any #tag / @group tokens typed straight into the description into chips
+    if (d.descText) {
+        d.descText = d.descText.replace(/(^|\s)([#@])([^\s#@]+)/g, (m, pre, sig, val) => {
+            if (sig === '#') { if (!d.tags.includes(val)) d.tags.push(val); }
+            else { d.group = val; }
+            return pre;
+        }).replace(/[ \t]{2,}/g, ' ').trim();
+    }
     const raw = composeTaskRaw(d);
     if (!raw.trim()) return;
     if (d.rec && d.rec.freq && d.rec.freq !== 'none') {
-        const rule = { id: genId(), raw, freq: d.rec.freq, interval: Math.max(1, Number(d.rec.interval) || 1), start: d.date || todayISO(), end: null };
-        if (d.rec.freq === 'weekly') rule.weekdays = d.rec.weekdays.length ? d.rec.weekdays.slice() : [(parseISO(rule.start).getDay() + 6) % 7];
-        if (d.rec.freq === 'monthly') rule.monthday = parseISO(rule.start).getDate();
+        const start = d.date || todayISO();
+        const rule = Object.assign({ id: genId(), raw, start, end: null }, ruleFromRecDraft(d.rec));
+        if ((rule.freq === 'monthly' || rule.freq === 'yearly') && rule.monthMode === 'day' && !rule.monthday)
+            rule.monthday = parseISO(start).getDate();
         plugin.settings.recurrences.push(rule);
         await plugin.saveSettings();
     } else {
         const file = await getOrCreateDateFile(app, d.date || todayISO());
-        await addTask(app, file, raw, plugin.settings);
+        const mark = statusMark(d.status || 'todo');
+        const lineNum = await insertLineUnderHeading(app, file, `- [${mark}] ${applyDefaults(raw, plugin.settings)}`, plugin.settings);
+        if (d.descText && d.descText.trim() && lineNum != null) {
+            await setDescription(app, file, { line: lineNum, text: d.text, descId: null }, d.descText, plugin.settings);
+        }
     }
 }
 
@@ -1289,7 +1558,127 @@ function renderFab(app, plugin, container, date) {
     fab.onclick = () => new TaskCreateModal(app, plugin, date).open();
 }
 
-// Full create modal (Ctrl+P "Створити задачу" + mobile FAB) — task with optional recurrence
+// Inline #tag / @group autocomplete on a textarea. Calls onPick(sig, value) when a token
+// is committed (the token text is first stripped from the textarea). Shared by the create
+// modal's smart description and the task editor.
+function attachInlineTagAutocomplete(ta, tags, groups, onPick) {
+    let sug = null, items = [], active = -1, token = null;
+    const close = () => { if (sug) sug.remove(); sug = null; items = []; active = -1; token = null; };
+    const commit = val => {
+        if (!token || !val) { close(); return; }
+        const sig = token.sig;
+        ta.value = (ta.value.slice(0, token.start) + ta.value.slice(token.end)).replace(/[ \t]{2,}/g, ' ');
+        ta.selectionStart = ta.selectionEnd = token.start;
+        close();
+        onPick(sig, val);
+        ta.focus();
+    };
+    const render = () => {
+        if (sug) sug.remove();
+        sug = document.body.createEl('div', { cls: 'tc-suggest' });
+        items.forEach((it, i) => {
+            const row = sug.createEl('div', { cls: i === active ? 'tc-suggest-item is-active' : 'tc-suggest-item' });
+            row.setText(token.sig + it);
+            row.onmousedown = e => { e.preventDefault(); commit(it); };
+        });
+        const r = ta.getBoundingClientRect();
+        sug.style.left = `${r.left}px`; sug.style.top = `${r.bottom + 2}px`; sug.style.minWidth = `${Math.min(r.width, 280)}px`;
+    };
+    const update = () => {
+        const m = ta.value.slice(0, ta.selectionStart).match(/([#@])([^\s#@]*)$/);
+        if (!m) { close(); return; }
+        token = { sig: m[1], start: ta.selectionStart - m[0].length, end: ta.selectionStart };
+        items = (m[1] === '#' ? tags : groups).filter(x => x.toLowerCase().includes(m[2].toLowerCase())).slice(0, 8);
+        active = items.length ? 0 : -1;
+        if (items.length) render(); else close();
+    };
+    ta.addEventListener('input', update);
+    ta.addEventListener('keydown', e => {
+        if (sug && items.length) {
+            if (e.key === 'ArrowDown') { e.preventDefault(); active = (active + 1) % items.length; render(); return; }
+            if (e.key === 'ArrowUp') { e.preventDefault(); active = (active - 1 + items.length) % items.length; render(); return; }
+            if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); commit(items[active]); return; }
+            if (e.key === 'Escape') { close(); return; }
+        }
+        if (e.key === ' ' && token) { const frag = ta.value.slice(token.start + 1, ta.selectionStart); if (frag) { e.preventDefault(); commit(frag); } }
+    });
+    ta.addEventListener('blur', () => setTimeout(close, 150));
+}
+
+// Description textarea with inline #tag / @group autocomplete; picks become chips below.
+function buildSmartDescription(container, d, tags, groups) {
+    const wrap = container.createEl('div', { cls: 'tc-smartdesc' });
+    const ta = wrap.createEl('textarea', { cls: 'tc-editor-desc tc-smartdesc-input' });
+    ta.rows = 4;
+    ta.placeholder = t('Опис, теги #, групи @…');
+    ta.value = d.descText || '';
+
+    const chipsWrap = wrap.createEl('div', { cls: 'tc-chips tc-smartdesc-chips' });
+    const drawChips = () => {
+        chipsWrap.empty();
+        const make = (val, kind) => {
+            const chip = chipsWrap.createEl('span', { cls: kind === 'group' ? 'tc-chip tc-chip-group' : 'tc-chip' });
+            chip.createSpan({ text: (kind === 'group' ? '@' : '#') + val });
+            chip.createEl('span', { text: '✕', cls: 'tc-chip-x' }).onclick = () => {
+                if (kind === 'group') d.group = null; else d.tags = d.tags.filter(x => x !== val);
+                drawChips();
+            };
+        };
+        d.tags.forEach(tg => make(tg, 'tag'));
+        if (d.group) make(d.group, 'group');
+        chipsWrap.toggleClass('tc-empty', !d.tags.length && !d.group);
+    };
+    drawChips();
+    ta.addEventListener('input', () => d.descText = ta.value);
+    attachInlineTagAutocomplete(ta, tags, groups, (sig, val) => {
+        if (sig === '#') { if (!d.tags.includes(val)) d.tags.push(val); } else d.group = val;
+        d.descText = ta.value; drawChips();
+    });
+}
+
+// Date / time picker with quick buttons (Today / Tomorrow / Next Monday)
+class DatePickerModal extends obsidian.Modal {
+    constructor(app, d, onDone) { super(app); this.d = d; this.onDone = onDone; }
+    onOpen() {
+        const { contentEl } = this;
+        contentEl.addClass('tc-editor');
+        contentEl.createEl('h3', { text: t('Дата та час') });
+        new obsidian.Setting(contentEl).setName(t('Дата'))
+            .addText(c => { c.inputEl.type = 'date'; c.setValue(this.d.date || todayISO()).onChange(v => this.d.date = v); });
+        new obsidian.Setting(contentEl).setName(t('Час'))
+            .addText(c => c.setPlaceholder('09:00').setValue(this.d.start || '').onChange(v => this.d.start = v.trim() || null))
+            .addText(c => c.setPlaceholder('10:30').setValue(this.d.end || '').onChange(v => this.d.end = v.trim() || null));
+        const done = () => { this.close(); if (this.onDone) this.onDone(); };
+        const quick = contentEl.createEl('div', { cls: 'tc-quick-dates' });
+        const pick = iso => { this.d.date = iso; done(); };
+        quick.createEl('button', { text: t('Сьогодні') }).onclick = () => pick(todayISO());
+        quick.createEl('button', { text: t('Завтра') }).onclick = () => pick(toISO(addDays(new Date(), 1)));
+        quick.createEl('button', { text: t('Наступного понеділка') }).onclick = () => pick(toISO(nextMonday()));
+        const footer = contentEl.createEl('div', { cls: 'tc-modal-btns' });
+        footer.createEl('button', { text: t('Очистити') }).onclick = () => { this.d.start = null; this.d.end = null; done(); };
+        footer.createEl('button', { text: t('Готово'), cls: 'mod-cta' }).onclick = done;
+    }
+    onClose() { this.contentEl.empty(); }
+}
+
+// Custom recurrence builder (wraps the shared schedule form, no raw/dates)
+class RecurrenceCustomModal extends obsidian.Modal {
+    constructor(app, rec, onDone) { super(app); this.rec = rec; this.onDone = onDone; if (this.rec.freq === 'none') this.rec.freq = 'daily'; }
+    onOpen() {
+        const { contentEl } = this;
+        contentEl.addClass('tc-editor');
+        contentEl.createEl('h3', { text: t('Кастомне повторення') });
+        const form = contentEl.createEl('div');
+        const r = () => { form.empty(); buildRecurrenceFields(form, this.rec, r, { hideRaw: true, hideDates: true }); };
+        r();
+        const footer = contentEl.createEl('div', { cls: 'tc-modal-btns' });
+        footer.createEl('button', { text: t('Скасувати') }).onclick = () => this.close();
+        footer.createEl('button', { text: t('Готово'), cls: 'mod-cta' }).onclick = () => { this.close(); if (this.onDone) this.onDone(); };
+    }
+    onClose() { this.contentEl.empty(); }
+}
+
+// Full create modal (Ctrl+P "Створити задачу" + mobile FAB) — title, smart description, quick-param row
 class TaskCreateModal extends obsidian.Modal {
     constructor(app, plugin, date) { super(app); this.plugin = plugin; this.d = newComposerDraft(date || todayISO()); }
     async onOpen() {
@@ -1301,6 +1690,7 @@ class TaskCreateModal extends obsidian.Modal {
         const { contentEl } = this;
         contentEl.empty();
         contentEl.addClass('tc-editor', 'tc-create');
+
         const name = contentEl.createEl('input', { cls: 'tc-title-input' });
         name.placeholder = t('Назва задачі');
         name.value = this.d.text;
@@ -1308,13 +1698,65 @@ class TaskCreateModal extends obsidian.Modal {
         name.addEventListener('keydown', e => { if (e.key === 'Enter') this.submit(); });
         setTimeout(() => name.focus(), 0);
 
-        const body = contentEl.createEl('div');
-        const r = () => { syncDraftChips(this.d); body.empty(); buildScheduleFields(body, this.d, r); buildAttrFields(body, this.d, this.tags, this.groups); };
-        r();
+        buildSmartDescription(contentEl, this.d, this.tags, this.groups);
+
+        const row = contentEl.createEl('div', { cls: 'tc-quick-row' });
+        const summary = contentEl.createEl('div', { cls: 'tc-quick-summary' });
+        let statusBtn, prioBtn;
+        const updateLabels = () => {
+            const parts = [];
+            if (this.d.date) parts.push('📅 ' + humanDate(this.d.date) + (this.d.start ? ' ' + this.d.start : ''));
+            if (this.d.rec && this.d.rec.freq && this.d.rec.freq !== 'none') parts.push('↻ ' + describeRule(ruleFromRecDraft(this.d.rec)));
+            summary.setText(parts.join('   ·   '));
+            // status icon reflects todo / done / cancelled
+            obsidian.setIcon(statusBtn, this.d.status === 'done' ? 'check-circle' : this.d.status === 'cancelled' ? 'x-circle' : 'circle');
+            statusBtn.style.color = this.d.status === 'done' ? 'var(--color-green)' : this.d.status === 'cancelled' ? 'var(--color-red)' : '';
+            statusBtn.toggleClass('is-set', this.d.status !== 'todo');
+            // priority icon reflects the selected priority colour
+            prioBtn.style.color = this.d.priority ? prioColor(this.d.priority) : '';
+            prioBtn.toggleClass('is-set', !!this.d.priority);
+        };
+        const iconBtn = (icon, label, handler) => {
+            const b = row.createEl('button', { cls: 'clickable-icon' });
+            obsidian.setIcon(b, icon);
+            b.setAttribute('aria-label', label);
+            b.onclick = handler;
+            return b;
+        };
+
+        statusBtn = iconBtn('circle', t('Статус'), e => {
+            const menu = new obsidian.Menu();
+            [['todo', t('Не виконана')], ['done', t('Виконана')], ['cancelled', t('Відмінена')]].forEach(o =>
+                menu.addItem(it => it.setTitle(o[1]).setChecked(this.d.status === o[0]).onClick(() => { this.d.status = o[0]; updateLabels(); })));
+            menu.showAtMouseEvent(e);
+        });
+        prioBtn = iconBtn('alert-circle', t('Пріоритет'), e => {
+            const menu = new obsidian.Menu();
+            menu.addItem(it => it.setTitle('—').setChecked(!this.d.priority).onClick(() => { this.d.priority = null; updateLabels(); }));
+            priorityKeys.forEach(k => menu.addItem(it => it.setTitle(k).setChecked(this.d.priority === k).onClick(() => { this.d.priority = k; updateLabels(); })));
+            menu.showAtMouseEvent(e);
+        });
+        iconBtn('calendar', t('Дата виконання'), () => new DatePickerModal(this.app, this.d, updateLabels).open());
+        iconBtn('repeat', t('Повторення'), e => {
+            const menu = new obsidian.Menu();
+            const base = parseISO(this.d.date || todayISO());
+            const setRec = rec => { Object.assign(this.d.rec, rec); updateLabels(); };
+            menu.addItem(it => it.setTitle(t('Без повтору')).onClick(() => setRec({ freq: 'none' })));
+            menu.addItem(it => it.setTitle(t('Щоденно')).onClick(() => setRec({ freq: 'daily', interval: 1 })));
+            menu.addItem(it => it.setTitle(t('Щотижнево (поточний день)')).onClick(() => setRec({ freq: 'weekly', interval: 1, weekdays: [(base.getDay() + 6) % 7] })));
+            menu.addItem(it => it.setTitle(t('Щотижнево у робочі дні (Пн–Пт)')).onClick(() => setRec({ freq: 'weekly', interval: 1, weekdays: [0, 1, 2, 3, 4] })));
+            menu.addItem(it => it.setTitle(t('Щомісячно (поточне число)')).onClick(() => setRec({ freq: 'monthly', interval: 1, monthMode: 'day', monthday: base.getDate() })));
+            menu.addItem(it => it.setTitle(t('Щорічно (поточний день)')).onClick(() => setRec({ freq: 'yearly', interval: 1, month: base.getMonth(), monthMode: 'day', monthday: base.getDate() })));
+            menu.addSeparator();
+            menu.addItem(it => it.setTitle(t('Кастомне налаштування…')).onClick(() => new RecurrenceCustomModal(this.app, this.d.rec, updateLabels).open()));
+            menu.showAtMouseEvent(e);
+        });
+
+        updateLabels();
 
         const footer = contentEl.createEl('div', { cls: 'tc-modal-btns' });
         footer.createEl('button', { text: t('Скасувати') }).onclick = () => this.close();
-        footer.createEl('button', { text: t('Створити'), cls: 'mod-cta' }).onclick = () => this.submit();
+        footer.createEl('button', { text: t('Зберегти'), cls: 'mod-cta' }).onclick = () => this.submit();
     }
     async submit() {
         this.d.text = (this.contentEl.querySelector('.tc-title-input').value || '').trim();
@@ -1393,7 +1835,7 @@ class HabitEditModal extends obsidian.Modal {
         this.plugin = plugin;
         this.habit = habit;
         this.onSave = onSave;
-        this.draft = { name: habit.name, property: habit.property, unit: habit.unit || '', type: habit.type, emoji: habit.emoji || '', color: habit.color || '#9aa0a6' };
+        this.draft = { name: habit.name, property: habit.property, unit: habit.unit || '', type: habit.type, emoji: habit.emoji || '', color: habit.color || '#9aa0a6', goal: habit.goal || '' };
     }
     onOpen() {
         const { contentEl } = this;
@@ -1428,6 +1870,16 @@ function makeCheckbox(parent, checked, onChange, cls) {
     input.checked = checked;
     input.addEventListener('change', () => { if (onChange) onChange(input.checked); });
     return input;
+}
+
+// Checkbox that renders an ✕ for cancelled tasks ([-]) instead of a check/dash
+function makeStatusCheckbox(parent, task, onChange, cls) {
+    if (task.cancelled) {
+        const box = parent.createEl('span', { cls: cls ? `tc-xbox ${cls}` : 'tc-xbox', text: '✕' });
+        box.addEventListener('click', e => { e.stopPropagation(); onChange(true); });
+        return box;
+    }
+    return makeCheckbox(parent, task.done, onChange, cls);
 }
 
 function tintBadge(el, color) {
@@ -1475,16 +1927,32 @@ function renderTaskRow(app, container, task, refresh, opts = {}) {
     if (task.start) row.addClass('tc-event');
     if (task.virtual) row.addClass('tc-virtual');
     if (task.done) row.addClass('tc-row-done');
+    if (task.cancelled) row.addClass('tc-cancelled');
 
     const subs = task.subtasks || [];
 
-    const cb = makeCheckbox(row, task.done, async checked => {
+    const cb = makeStatusCheckbox(row, task, async checked => {
         if (task.virtual) await materializeVirtual(app, task, checked, s);
         else if (subs.length) await toggleTaskCascade(app, task.file, task, checked);
         else await toggleTask(app, task.file, task.line, checked);
         await refresh();
     }, 'tc-cb');
     cb.onclick = e => e.stopPropagation();
+
+    // right-click → set status (real tasks only)
+    if (!task.virtual && task.file) {
+        row.addEventListener('contextmenu', e => {
+            e.preventDefault();
+            const menu = new obsidian.Menu();
+            menu.addItem(i => i.setTitle(t('Виконано')).setChecked(!!task.done)
+                .onClick(async () => { await setTaskStatus(app, task.file, task.line, 'done'); await refresh(); }));
+            menu.addItem(i => i.setTitle(t('Скасовано')).setChecked(!!task.cancelled)
+                .onClick(async () => { await setTaskStatus(app, task.file, task.line, 'cancelled'); await refresh(); }));
+            menu.addItem(i => i.setTitle(t('Не виконано')).setChecked(!task.done && !task.cancelled)
+                .onClick(async () => { await setTaskStatus(app, task.file, task.line, 'todo'); await refresh(); }));
+            menu.showAtMouseEvent(e);
+        });
+    }
 
     const main = row.createEl('div', { cls: 'tc-row-main' });
     const top = main.createEl('div', { cls: 'tc-row-top' });
@@ -1590,12 +2058,12 @@ class ListView extends obsidian.ItemView {
         let tasks = [];
         for (const { tasks: ts } of map.values()) tasks = tasks.concat(ts);
         tasks = tasks.filter(t => {
-            const overdue = t.date < todayStr && !t.done;
+            const overdue = t.date < todayStr && !t.done && !t.cancelled;
             if (overdue) return this.overdue;                 // overdue shown only when enabled
             if (t.date < todayStr) return this.range === 'all'; // past, done → only in "all"
             return !rangeEnd || t.date <= rangeEnd;             // today / future within range
         });
-        if (this.hideDone) tasks = tasks.filter(t => !t.done);
+        if (this.hideDone) tasks = tasks.filter(t => !t.done && !t.cancelled);
 
         // today's habit values (word-count needs async)
         const habits = this.showHabits ? habitList(settings) : [];
@@ -1622,7 +2090,7 @@ class ListView extends obsidian.ItemView {
         const refresh = () => this.refresh();
 
         // overdue tasks always form their own group (regardless of grouping)
-        const isOverdue = t => t.date < todayStr && !t.done;
+        const isOverdue = t => t.date < todayStr && !t.done && !t.cancelled;
         const overdueTasks = tasks.filter(isOverdue);
         const rest = overdueTasks.length ? tasks.filter(t => !isOverdue(t)) : tasks;
 
@@ -1886,6 +2354,24 @@ function renderTimeline(view, root, n) {
         s.createEl('span', { text: `▴ ${pad(rangeEnd)}:00 – 24:00` });
         s.onclick = () => { view.showLate = true; refresh(); };
     }
+
+    // current-time line — only when today is one of the shown days
+    if (view._nowTimer) { clearInterval(view._nowTimer); view._nowTimer = null; }
+    if (days.some(d => d.iso === todayStr)) {
+        const nowLine = grid.createEl('div', { cls: 'tc-tl-now' });
+        const place = () => {
+            const m = new Date();
+            const mm = m.getHours() * 60 + m.getMinutes();
+            if (mm < rangeStartMin || mm > rangeEndMin) { nowLine.style.display = 'none'; return; }
+            nowLine.style.display = '';
+            nowLine.style.top = `${(mm - rangeStartMin) / 60 * HOUR_PX}px`;
+        };
+        place();
+        view._nowTimer = window.setInterval(() => {
+            if (!nowLine.isConnected) { clearInterval(view._nowTimer); view._nowTimer = null; return; }
+            place();
+        }, 60000);
+    }
 }
 
 // Lay out time-overlapping events into side-by-side columns (mutates items: .col/.cols)
@@ -1972,9 +2458,10 @@ function renderEventCard(view, col, task, ctx, layout) {
     applyCardColor(card, task, ctx.colorBy, ctx.priorityDot);
     if (task.virtual) card.addClass('tc-virtual');   // dashed only for not-yet-materialized recurrences
     if (task.done) card.addClass('tc-tl-done');
+    if (task.cancelled) card.addClass('tc-cancelled');
 
     // checkbox (timed tasks)
-    const cb = makeCheckbox(card, task.done, async checked => {
+    const cb = makeStatusCheckbox(card, task, async checked => {
         if (task.virtual) await materializeVirtual(app, task, checked, view.plugin.settings);
         else await toggleTask(app, task.file, task.line, checked);
         ctx.refresh();
@@ -2310,10 +2797,11 @@ class CalendarView extends obsidian.ItemView {
                     entry.tasks.slice().sort(dayOrder).forEach(t => {
                         const bar = items.createEl('div', { cls: 'tc-bar' });
                         if (t.done) bar.addClass('tc-bar-done');
+                        if (t.cancelled) bar.addClass('tc-bar-cancelled');
                         if (t.virtual) bar.addClass('tc-virtual');
                         applyCardColor(bar, t, s.colorBy, s.priorityDot);
                         if (!mobile) {
-                            const cbx = makeCheckbox(bar, t.done, async checked => {
+                            const cbx = makeStatusCheckbox(bar, t, async checked => {
                                 if (t.virtual) await materializeVirtual(this.app, t, checked, s);
                                 else if (t.subtasks && t.subtasks.length) await toggleTaskCascade(this.app, t.file, t, checked);
                                 else await toggleTask(this.app, t.file, t.line, checked);
@@ -2668,7 +3156,11 @@ class SmartView extends obsidian.ItemView {
     }
 }
 
-// ─── Habits View (weekly tracker + heatmap statistics) ────────────────────────
+// ─── Habits View (two-pane dashboard: list + selected-habit detail) ───────────
+
+// Pane width (px) below which the two-pane dashboard collapses to a single column
+// (left list, tap a habit → detail screen). Raise it to hide the detail pane sooner.
+const HABITS_2PANE_MIN = 860;
 
 function heatLevel(value, max) {
     if (value <= 0 || max <= 0) return 0;
@@ -2679,247 +3171,364 @@ function heatColor(base, lvl) {
     return `color-mix(in srgb, ${base} ${6 + lvl * 22}%, var(--background-secondary))`;
 }
 
+// Read a habit's value out of a (cached) frontmatter object — fully synchronous.
+function fmHabitValue(fm, habit) {
+    const v = fm ? fm[habit.property] : undefined;
+    if (habit.type === 'bool') return (v === true || v === 'true') ? 1 : 0;
+    return Number(v) || 0;
+}
+
+// SVG progress ring with an optional centered label. Returns the wrapper element.
+function makeRing(parent, frac, color, opts) {
+    opts = opts || {};
+    const size = opts.size || 28, sw = opts.stroke || 3;
+    const r = (size - sw) / 2, circ = 2 * Math.PI * r, ns = 'http://www.w3.org/2000/svg';
+    const wrap = parent.createEl('div', { cls: 'tc-ring-wrap' });
+    wrap.style.width = wrap.style.height = size + 'px';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', `0 0 ${size} ${size}`);
+    svg.classList.add('tc-ring');
+    const circle = (stroke, dashFrac) => {
+        const ci = document.createElementNS(ns, 'circle');
+        ci.setAttribute('cx', size / 2); ci.setAttribute('cy', size / 2); ci.setAttribute('r', r);
+        ci.setAttribute('fill', 'none'); ci.setAttribute('stroke', stroke); ci.setAttribute('stroke-width', sw);
+        if (dashFrac != null) {
+            ci.setAttribute('stroke-dasharray', circ);
+            ci.setAttribute('stroke-dashoffset', circ * (1 - dashFrac));
+            ci.setAttribute('stroke-linecap', 'round');
+            ci.setAttribute('transform', `rotate(-90 ${size / 2} ${size / 2})`);
+        }
+        svg.appendChild(ci);
+    };
+    circle('var(--background-modifier-border)');
+    if (frac > 0) circle(color || 'var(--interactive-accent)', Math.min(1, frac));
+    wrap.appendChild(svg);
+    if (opts.center != null) wrap.createEl('span', { cls: 'tc-ring-center', text: String(opts.center) });
+    if (frac >= 1) wrap.addClass('tc-ring-full');
+    return wrap;
+}
+
 class HabitsView extends obsidian.ItemView {
     constructor(leaf, plugin) {
         super(leaf);
         this.plugin = plugin;
-        this.anchor = new Date();          // week shown in the tracker grid
-        this.heatHabit = 'all';            // 'all' | habit id
-        this.heatPeriod = 'month';         // 'month' | 'year'
-        this.heatAnchor = new Date();
+        this.anchor = new Date();          // single focus date driving week / month / year
+        this.selectedHabit = null;
+        this.mobileDetail = false;         // narrow: list (false) vs detail screen (true)
     }
 
     getViewType() { return HABITS_VIEW; }
     getDisplayText() { return t('Звички'); }
     getIcon() { return 'check-circle'; }
 
-    async onOpen() { await this.refresh(); }
-    onResize() { const c = compactMode(this); if (c !== this._lastCompact) this.refresh(); }
-    shiftWeek(dir) { this.anchor = addDays(this.anchor, dir * 7); this.refresh(); }
+    async onOpen() {
+        // Re-render when habit values change. Writes (setHabitValue) update metadataCache
+        // ASYNCHRONOUSLY, so we refresh on its 'changed' event (not right after the write)
+        // to avoid reading stale frontmatter. Debounced to collapse bursts and avoid flicker.
+        this._scheduleRefresh = obsidian.debounce(() => this.refresh(), 200, true);
+        const isDaily = file => { const c = getDailyNotesConfig(this.app); return !!(file && fileToDate(file, c.folder, c.format)); };
+        this.registerEvent(this.app.metadataCache.on('changed', file => { if (isDaily(file)) this._scheduleRefresh(); }));
+        this.registerEvent(this.app.vault.on('create', () => this._scheduleRefresh()));
+        this.registerEvent(this.app.vault.on('delete', () => this._scheduleRefresh()));
+        this.registerEvent(this.app.vault.on('rename', () => this._scheduleRefresh()));
+        await this.refresh();
+    }
+    isNarrow() {
+        const w = (this.containerEl.children[1] && this.containerEl.children[1].clientWidth) || 0;
+        return obsidian.Platform.isMobile || w < HABITS_2PANE_MIN;
+    }
+    onResize() { const n = this.isNarrow(); if (n !== this._narrow) this.refresh(); }
+
+    // value lookup backed by the per-refresh caches (synchronous)
+    val(iso, habit) { return habit.auto === 'words' ? (this._words.get(iso) || 0) : fmHabitValue(this._fm.get(iso), habit); }
+
+    // ── synchronized period navigation (all driven by this.anchor) ───────────
+    weekStep(dir) { this.anchor = addDays(this.anchor, dir * 7); this.refresh(); }
+    monthStep(dir) {
+        const a = this.anchor, nm = new Date(a.getFullYear(), a.getMonth() + dir, 1);
+        this.anchor = new Date(nm.getFullYear(), nm.getMonth(), Math.min(a.getDate(), lastDayOfMonth(nm.getFullYear(), nm.getMonth())));
+        this.refresh();
+    }
+    yearStep(dir) {
+        const ty = this.anchor.getFullYear() + dir, cy = new Date().getFullYear();
+        if (ty < cy) this.anchor = new Date(ty, 11, 31);       // past year → last month + last week
+        else if (ty === cy) this.anchor = new Date();          // current year → today
+        else this.anchor = new Date(ty, 0, 1);                 // future → start
+        this.refresh();
+    }
+    // ◀ [label → today] ▶  — identical control reused for week / month / year
+    navGroup(container, label, stepFn) {
+        const g = container.createEl('div', { cls: 'tc-nav-group' });
+        const pv = g.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(pv, 'chevron-left'); pv.onclick = () => stepFn(-1);
+        const lbl = g.createEl('button', { cls: 'tc-nav-label', text: label });
+        lbl.setAttribute('aria-label', t('До поточного'));
+        lbl.onclick = () => { this.anchor = new Date(); this.refresh(); };
+        const nx = g.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(nx, 'chevron-right'); nx.onclick = () => stepFn(1);
+        return g;
+    }
 
     async refresh() {
-        this._lastCompact = compactMode(this);
+        this._narrow = this.isNarrow();
         const root = this.containerEl.children[1];
-        root.empty();
-        root.addClass('tc-pane');
-
         const habits = habitList(this.plugin.settings);
 
-        const bar = root.createEl('div', { cls: 'tc-cal-header' });
-        bar.createEl('div', { text: t('Звички'), cls: 'tc-cal-title' });
-        const nav = bar.createEl('div', { cls: 'tc-nav-group' });
-        const prev = nav.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(prev, 'chevron-left');
-        prev.onclick = () => this.shiftWeek(-1);
-        nav.createEl('button', { text: t('Цей тиждень') }).onclick = () => { this.anchor = new Date(); this.refresh(); };
-        const next = nav.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(next, 'chevron-right');
-        next.onclick = () => this.shiftWeek(1);
-
         if (!habits.length) {
+            root.empty(); root.addClass('tc-pane');
+            const bar = root.createEl('div', { cls: 'tc-cal-header' });
+            bar.createEl('div', { text: t('Звички'), cls: 'tc-cal-title' });
+            const add = bar.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(add, 'plus');
+            add.onclick = () => this.openCreate();
             root.createEl('p', { text: t('Звичок ще немає. Створіть їх через Ctrl+P → Звичка.'), cls: 'tc-empty' });
             return;
         }
+        if (!this.selectedHabit || !habits.find(h => h.id === this.selectedHabit)) this.selectedHabit = habits[0].id;
 
-        await this.renderGrid(root, habits);
-        root.createEl('div', { cls: 'tc-hr' });
-        await this.renderHeatmap(root, habits);
-    }
-
-    habitCell(cell, habit, iso, v) {
-        if (habit.auto) {
-            cell.createSpan({ text: v ? String(v) : '–', cls: 'tc-habit-auto' });
-        } else if (habit.type === 'bool') {
-            makeCheckbox(cell, v > 0, checked => setHabitValue(this.app, iso, habit, checked ? true : null));
-        } else {
-            const inp = cell.createEl('input', { cls: 'tc-habit-input' });
-            inp.type = 'number';
-            inp.placeholder = '–';
-            if (v) inp.value = String(v);
-            inp.onchange = () => {
-                const num = inp.value === '' ? null : Number(inp.value);
-                setHabitValue(this.app, iso, habit, (num == null || isNaN(num)) ? null : num);
-            };
+        // ── gather ALL data BEFORE emptying (anti-flicker). Frontmatter is read once
+        //    from the (synchronous) metadata cache; word counts only if a word habit exists.
+        this._files = getDateFiles(this.app);                     // [{file, date}]
+        this._fm = new Map();
+        for (const { file, date } of this._files) {
+            const fc = this.app.metadataCache.getFileCache(file);
+            this._fm.set(date, (fc && fc.frontmatter) || {});
         }
-    }
-
-    async renderGrid(root, habits) {
-        const start = startOfWeek(this.anchor);
-        const days = [];
-        for (let i = 0; i < 7; i++) days.push(addDays(start, i));
-        const todayStr = todayISO();
-
-        // precompute values (word-count habit needs async file reads)
-        const val = {};
-        for (const h of habits) {
-            val[h.id] = {};
-            for (const d of days) val[h.id][toISO(d)] = await getHabitValue(this.app, toISO(d), h);
+        this._words = new Map();
+        if (habits.some(h => h.auto === 'words')) {
+            for (const { file, date } of this._files) this._words.set(date, countWords(await this.app.vault.read(file)));
         }
 
-        // compact: one card per habit with a row of 7 day cells
-        if (compactMode(this)) {
-            const cards = root.createEl('div', { cls: 'tc-habit-cards' });
-            for (const habit of habits) {
-                const card = cards.createEl('div', { cls: 'tc-habit-card' });
-                const title = card.createEl('div', { cls: 'tc-habit-title' });
-                if (habit.emoji) title.createSpan({ text: habit.emoji + ' ' });
-                title.createSpan({ text: habit.name });
-                const week = card.createEl('div', { cls: 'tc-habit-week' });
-                for (const day of days) {
-                    const iso = toISO(day);
-                    const dc = week.createEl('div', { cls: 'tc-habit-daycell' });
-                    if (iso === todayStr) dc.addClass('tc-habit-today');
-                    dc.createEl('div', { text: WD_UA[(day.getDay() + 6) % 7], cls: 'tc-habit-dl' });
-                    this.habitCell(dc.createEl('div', { cls: 'tc-habit-ctl' }), habit, iso, val[habit.id][iso]);
-                }
-            }
+        // ── render synchronously ──
+        root.empty();
+        root.addClass('tc-pane');
+        if (this._narrow) {
+            if (this.mobileDetail) this.renderHabitDetail(root, habits, true);
+            else this.renderHabitList(root, habits, true);
             return;
         }
+        const pane = root.createEl('div', { cls: 'tc-habits-2pane' });
+        this.renderHabitList(pane.createEl('div', { cls: 'tc-habits-list' }), habits, false);
+        this.renderHabitDetail(pane.createEl('div', { cls: 'tc-habits-detail' }), habits, false);
+    }
 
-        const table = root.createEl('div', { cls: 'tc-habits' });
-        const hrow = table.createEl('div', { cls: 'tc-habit-row tc-habit-head' });
-        hrow.createEl('div', { cls: 'tc-habit-name' });
-        for (const day of days) {
-            const c = hrow.createEl('div', { cls: 'tc-habit-cell' });
-            if (toISO(day) === todayStr) c.addClass('tc-habit-today');
-            c.createEl('div', { text: WD_UA[(day.getDay() + 6) % 7], cls: 'tc-col-wd' });
-            c.createEl('div', { text: `${pad(day.getDate())}.${pad(day.getMonth() + 1)}`, cls: 'tc-col-date' });
+    openCreate() {
+        const m = new HabitCreateModal(this.app, this.plugin);
+        const orig = m.onClose.bind(m);
+        m.onClose = () => { orig(); this.refresh(); };
+        m.open();
+    }
+
+    currentStreak(habit) {
+        let s = 0;
+        const today = parseISO(todayISO());
+        for (let i = 0; i < 180; i++) {
+            const v = this.val(toISO(addDays(today, -i)), habit);
+            if (habitDone(v, habit)) s++;
+            else if (i === 0) continue;   // today still pending — don't zero an ongoing streak
+            else break;
+        }
+        return s;
+    }
+
+    cellInput(cell, habit, iso, v) {
+        if (habit.auto) return;
+        cell.addClass('tc-clickable');
+        // no manual refresh — the metadataCache 'changed' event re-renders with fresh data
+        cell.onclick = () => {
+            if (habit.type === 'bool') setHabitValue(this.app, iso, habit, v > 0 ? null : true);
+            else new HabitCompleteModal(this.app, habit, iso, () => {}).open();
+        };
+    }
+
+    // ── left: habit list with week ring-header ───────────────────────────────
+    renderHabitList(root, habits, mobile) {
+        const bar = root.createEl('div', { cls: 'tc-cal-header' });
+        bar.createEl('div', { text: t('Звички'), cls: 'tc-cal-title' });
+        const ctr = bar.createEl('div', { cls: 'tc-cal-controls' });
+        const start = startOfWeek(this.anchor), wkEnd = addDays(start, 6);
+        const wkLabel = `${pad(start.getDate())}.${pad(start.getMonth() + 1)} – ${pad(wkEnd.getDate())}.${pad(wkEnd.getMonth() + 1)}`;
+        this.navGroup(ctr, wkLabel, dir => this.weekStep(dir));
+        const add = ctr.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(add, 'plus');
+        add.setAttribute('aria-label', t('Нова звичка')); add.onclick = () => this.openCreate();
+
+        const days = []; for (let i = 0; i < 7; i++) days.push(addDays(start, i));
+        const todayStr = todayISO();
+
+        const head = root.createEl('div', { cls: 'tc-hl-grid tc-hl-weekhead' });
+        head.createEl('div', { cls: 'tc-hl-corner' });
+        for (const d of days) {
+            const iso = toISO(d);
+            const col = head.createEl('div', { cls: iso === todayStr ? 'tc-hl-dayhead tc-hl-today' : 'tc-hl-dayhead' });
+            col.createEl('div', { text: WD_UA[(d.getDay() + 6) % 7], cls: 'tc-col-wd' });
+            let sum = 0; for (const h of habits) sum += habitProgress(this.val(iso, h), h);
+            makeRing(col, habits.length ? sum / habits.length : 0, 'var(--interactive-accent)', { size: 26, stroke: 3, center: String(d.getDate()) });
         }
 
         for (const habit of habits) {
-            const row = table.createEl('div', { cls: 'tc-habit-row' });
-            const nameCell = row.createEl('div', { cls: 'tc-habit-name' });
-            const title = nameCell.createEl('div', { cls: 'tc-habit-title' });
-            if (habit.emoji) title.createSpan({ text: habit.emoji + ' ' });
-            title.createSpan({ text: habit.name });
-            nameCell.createEl('div', { text: habit.type === 'bool' ? t('так/ні') : (habit.unit || ''), cls: 'tc-habit-unit' });
+            const row = root.createEl('div', { cls: 'tc-hl-grid tc-hl-row' + (habit.id === this.selectedHabit ? ' is-selected' : '') });
+            const info = row.createEl('div', { cls: 'tc-hl-info' });
+            info.onclick = () => { this.selectedHabit = habit.id; if (this._narrow) this.mobileDetail = true; this.refresh(); };
+            const badge = info.createEl('div', { cls: 'tc-hl-badge', text: habit.emoji || '•' });
+            if (habit.color) badge.style.background = `color-mix(in srgb, ${habit.color} 30%, transparent)`;
+            const meta = info.createEl('div', { cls: 'tc-hl-meta' });
+            meta.createEl('div', { text: habit.name, cls: 'tc-hl-name' });
+            meta.createEl('div', { cls: 'tc-hl-streak', text: `🔥 ${this.currentStreak(habit)} ${t('дн.')}` });
 
-            for (const day of days) {
-                const iso = toISO(day);
-                const cell = row.createEl('div', { cls: 'tc-habit-cell' });
-                if (iso === todayStr) cell.addClass('tc-habit-today');
-                this.habitCell(cell, habit, iso, val[habit.id][iso]);
+            for (const d of days) {
+                const iso = toISO(d);
+                const cell = row.createEl('div', { cls: 'tc-hl-cell' });
+                const v = this.val(iso, habit);
+                const w = makeRing(cell, habitProgress(v, habit), habit.color || 'var(--interactive-accent)', { size: 24, stroke: 3 });
+                if (habitDone(v, habit)) w.addClass('tc-ring-done');
+                this.cellInput(cell, habit, iso, v);
             }
         }
     }
 
-    async renderHeatmap(root, habits) {
-        const settings = this.plugin.settings;
-        const single = this.heatHabit !== 'all' ? habits.find(h => h.id === this.heatHabit) : null;
+    // ── right: detail of the selected habit ──────────────────────────────────
+    renderHabitDetail(root, habits, mobile) {
+        const habit = habits.find(h => h.id === this.selectedHabit) || habits[0];
 
-        // controls
-        const ctrls = root.createEl('div', { cls: 'tc-heat-ctrls' });
-        const habitSel = ctrls.createEl('select', { cls: 'dropdown' });
-        const optAll = habitSel.createEl('option', { text: t('Усі звички') }); optAll.value = 'all';
-        if (this.heatHabit === 'all') optAll.selected = true;
-        for (const h of habits) {
-            const o = habitSel.createEl('option', { text: (h.emoji ? h.emoji + ' ' : '') + h.name }); o.value = h.id;
-            if (this.heatHabit === h.id) o.selected = true;
+        const head = root.createEl('div', { cls: 'tc-hd-head' });
+        if (mobile) {
+            const back = head.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(back, 'arrow-left');
+            back.setAttribute('aria-label', t('← Назад')); back.onclick = () => { this.mobileDetail = false; this.refresh(); };
         }
-        habitSel.onchange = () => { this.heatHabit = habitSel.value; this.refresh(); };
-
-        const periodSel = ctrls.createEl('select', { cls: 'dropdown' });
-        for (const [v, l] of [['month', 'Місяць'], ['year', 'Рік']]) {
-            const o = periodSel.createEl('option', { text: t(l) }); o.value = v;
-            if (this.heatPeriod === v) o.selected = true;
+        const title = head.createEl('div', { cls: 'tc-hd-title' });
+        title.createEl('span', { cls: 'tc-hd-emoji', text: habit.emoji || '•' });
+        title.createEl('span', { text: habit.name });
+        if (!habit.auto) {
+            const more = head.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(more, 'more-horizontal');
+            more.onclick = e => {
+                const menu = new obsidian.Menu();
+                menu.addItem(it => it.setTitle(t('Редагувати')).setIcon('pencil').onClick(() => {
+                    new HabitEditModal(this.app, this.plugin, habit, () => this.refresh()).open();
+                }));
+                menu.addItem(it => it.setTitle(t('Видалити')).setIcon('trash').onClick(async () => {
+                    this.plugin.settings.habits = this.plugin.settings.habits.filter(h => h.id !== habit.id);
+                    await this.plugin.saveSettings();
+                    this.selectedHabit = null; this.mobileDetail = false; this.refresh();
+                }));
+                menu.showAtMouseEvent(e);
+            };
         }
-        periodSel.onchange = () => { this.heatPeriod = periodSel.value; this.refresh(); };
 
-        const nav = ctrls.createEl('div', { cls: 'tc-nav-group' });
-        const step = dir => {
-            if (this.heatPeriod === 'year') this.heatAnchor = new Date(this.heatAnchor.getFullYear() + dir, 0, 1);
-            else this.heatAnchor = new Date(this.heatAnchor.getFullYear(), this.heatAnchor.getMonth() + dir, 1);
-            this.refresh();
+        // month (follows the shared anchor) + all-time aggregates — all synchronous
+        const y = this.anchor.getFullYear(), m = this.anchor.getMonth();
+        const last = new Date(y, m + 1, 0).getDate();
+        const monthIsos = []; for (let dd = 1; dd <= last; dd++) monthIsos.push(toISO(new Date(y, m, dd)));
+        const monthVals = {}; for (const iso of monthIsos) monthVals[iso] = this.val(iso, habit);
+
+        let monthChecks = 0, monthCount = 0;
+        for (const iso of monthIsos) { const v = monthVals[iso]; monthCount += v; if (habitDone(v, habit)) monthChecks++; }
+        const rate = monthIsos.length ? Math.round(monthChecks / monthIsos.length * 100) : 0;
+
+        let totalChecks = 0, totalCount = 0;
+        for (const { date } of this._files) { const v = this.val(date, habit); totalCount += v; if (habitDone(v, habit)) totalChecks++; }
+        const streak = this.currentStreak(habit);
+
+        const grid = root.createEl('div', { cls: 'tc-metric-grid' });
+        const card = (icon, label, value, sub) => {
+            const c = grid.createEl('div', { cls: 'tc-metric-card' });
+            const top = c.createEl('div', { cls: 'tc-metric-top' });
+            const ic = top.createEl('span', { cls: 'tc-metric-icon' }); obsidian.setIcon(ic, icon);
+            top.createEl('span', { text: label, cls: 'tc-metric-label' });
+            c.createEl('div', { text: String(value), cls: 'tc-metric-value' });
+            if (sub) c.createEl('div', { text: sub, cls: 'tc-metric-sub' });
         };
-        const pv = nav.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(pv, 'chevron-left'); pv.onclick = () => step(-1);
-        const nx = nav.createEl('button', { cls: 'clickable-icon' }); obsidian.setIcon(nx, 'chevron-right'); nx.onclick = () => step(1);
+        card('check-circle', t('Щомісячні перевірки'), monthChecks, t('День'));
+        card('list', t('Загальна реєстрація'), totalChecks, t('День'));
+        card('percent', t('Щомісячна ставка реєстрації'), rate + ' %');
+        card('flame', t('Поточна серія'), streak, t('День'));
+        card('bar-chart', t('Щомісячне виконання'), monthCount, t('Рахунок'));
+        card('bar-chart-2', t('Загальний обсяг виконання'), totalCount, t('Рахунок'));
 
-        // period range
-        const y = this.heatAnchor.getFullYear();
-        let from, to, title;
-        if (this.heatPeriod === 'year') {
-            from = new Date(y, 0, 1); to = new Date(y, 11, 31); title = String(y);
-        } else {
-            const m = this.heatAnchor.getMonth();
-            from = new Date(y, m, 1); to = new Date(y, m + 1, 0); title = `${MONTHS_UA[m]} ${y}`;
-        }
-        ctrls.createEl('div', { text: title, cls: 'tc-heat-title' });
+        this.renderRingCalendar(root, habit, monthVals, y, m);
+        this.renderBarChart(root, habit, monthIsos, monthVals);
+        this.renderHeatmapBlock(root, habit);
+    }
 
-        // gather values per day
-        const base = single ? (single.color || 'var(--interactive-accent)') : 'var(--interactive-accent)';
-        const values = new Map();   // iso -> value
-        let max = 0;
-        for (let d = new Date(from); d <= to; d = addDays(d, 1)) {
+    renderRingCalendar(root, habit, monthVals, y, m) {
+        const wrap = root.createEl('div', { cls: 'tc-ring-cal' });
+        const hd = wrap.createEl('div', { cls: 'tc-cal-header' });
+        hd.createEl('div', { text: t('Місяць'), cls: 'tc-hd-subhead' });
+        this.navGroup(hd, `${MONTHS_UA[m]} ${y}`, dir => this.monthStep(dir));
+
+        const grid = wrap.createEl('div', { cls: 'tc-ringcal-grid' });
+        for (const wd of weekdayHeaders()) grid.createEl('div', { text: wd, cls: 'tc-wd' });
+        const todayStr = todayISO();
+        const gs = startOfWeek(new Date(y, m, 1));
+        for (let i = 0; i < 42; i++) {
+            const d = addDays(gs, i);
+            const inMonth = d.getMonth() === m;
             const iso = toISO(d);
-            let v;
-            if (single) v = await getHabitValue(this.app, iso, single);
-            else {
-                v = 0;
-                for (const h of habits) if ((await getHabitValue(this.app, iso, h)) > 0) v++;
-            }
-            values.set(iso, v);
-            if (v > max) max = v;
+            const cell = grid.createEl('div', { cls: inMonth ? 'tc-ringcal-cell' : 'tc-ringcal-cell tc-outside' });
+            const v = inMonth ? monthVals[iso] : 0;
+            makeRing(cell, habitProgress(v, habit), habit.color || 'var(--interactive-accent)', { size: 34, stroke: 3, center: String(d.getDate()) });
+            if (iso === todayStr) cell.addClass('tc-today');
+            if (inMonth) this.cellInput(cell, habit, iso, v);
         }
-        if (!single) max = habits.length;          // "all" scales to number of habits
-        max = Math.max(max, 1);
-
-        const unit = single ? (single.unit || (single.type === 'bool' ? t('разів') : '')) : t('звичок');
-
-        const cellFor = (iso, dim) => {
-            const v = values.has(iso) ? values.get(iso) : 0;
-            const cell = document.createElement('div');
-            cell.className = 'tc-heat-cell' + (dim ? ' tc-heat-dim' : '');
-            cell.style.background = heatColor(base, heatLevel(v, max));
-            cell.title = `${iso}: ${v}${unit ? ' ' + unit : ''}`;
-            return cell;
-        };
-
-        const wrap = root.createEl('div', { cls: 'tc-heat' });
-        if (this.heatPeriod === 'month') {
-            const grid = wrap.createEl('div', { cls: 'tc-heat-month' });
-            for (const wd of weekdayHeaders()) grid.createEl('div', { text: wd, cls: 'tc-heat-wd' });
-            const gridStart = startOfWeek(from);
-            for (let i = 0; i < 42; i++) {
-                const d = addDays(gridStart, i);
-                if (d > to && d.getMonth() !== from.getMonth()) { grid.createEl('div'); continue; }
-                const inMonth = d.getMonth() === from.getMonth();
-                grid.appendChild(cellFor(toISO(d), !inMonth));
-            }
-        } else {
-            const cols = wrap.createEl('div', { cls: 'tc-heat-year' });
-            let d = startOfWeek(from);
-            while (d <= to) {
-                const col = cols.createEl('div', { cls: 'tc-heat-col' });
-                for (let i = 0; i < 7; i++) {
-                    const day = addDays(d, i);
-                    col.appendChild(cellFor(toISO(day), day < from || day > to));
-                }
-                d = addDays(d, 7);
-            }
-        }
-
-        if (single) this.renderStats(root, values, max, single, unit);
     }
 
-    renderStats(root, values, max, habit, unit) {
-        const isos = [...values.keys()].sort();
-        let total = 0, record = 0, streak = 0, longest = 0;
-        for (const iso of isos) {
-            const v = values.get(iso);
-            total += v;
-            if (v > record) record = v;
-            if (v > 0) { streak++; longest = Math.max(longest, streak); } else streak = 0;
-        }
-        const periodLabel = this.heatPeriod === 'year' ? t('За рік') : t('За місяць');
+    renderBarChart(root, habit, monthIsos, monthVals) {
+        const wrap = root.createEl('div', { cls: 'tc-barchart-wrap' });
+        wrap.createEl('div', { cls: 'tc-hd-subhead', text: 'Daily Goals' + (habit.unit ? ` (${habit.unit})` : '') });
+        let max = habit.goal > 0 ? habit.goal : 1;
+        for (const iso of monthIsos) max = Math.max(max, monthVals[iso]);
 
-        const box = root.createEl('div', { cls: 'tc-stats' });
-        const card = (label, value, sub) => {
-            const c = box.createEl('div', { cls: 'tc-stat-card' });
-            c.createEl('div', { text: label, cls: 'tc-stat-label' });
-            c.createEl('div', { text: String(value), cls: 'tc-stat-value' });
-            if (sub) c.createEl('div', { text: sub, cls: 'tc-stat-sub' });
-        };
-        card(t('Найдовша серія'), longest, t('днів підряд'));
-        card(t('Рекорд за день'), record, unit);
-        card(periodLabel, total.toLocaleString(), unit);
+        const chart = wrap.createEl('div', { cls: 'tc-barchart' });
+        const tip = chart.createEl('div', { cls: 'tc-bar-tip' }); tip.style.display = 'none';
+        if (habit.goal > 0) {
+            const line = chart.createEl('div', { cls: 'tc-bar-goalline' });
+            line.style.bottom = `${habit.goal / max * 100}%`;
+            line.createEl('span', { cls: 'tc-bar-goallabel', text: t('Ціль') + ' ' + habit.goal });
+        }
+        monthIsos.forEach((iso, idx) => {
+            const v = monthVals[iso];
+            const col = chart.createEl('div', { cls: 'tc-bar-col' });
+            const fill = col.createEl('div', { cls: habitDone(v, habit) ? 'tc-bar-fill tc-bar-done' : 'tc-bar-fill' });
+            fill.style.height = `${Math.min(1, v / max) * 100}%`;
+            if (habit.color && habitDone(v, habit)) fill.style.background = habit.color;
+            col.addEventListener('mouseenter', () => { tip.style.display = ''; tip.setText(String(v)); tip.style.left = `${(idx + 0.5) / monthIsos.length * 100}%`; });
+            col.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+        });
+
+        const axis = wrap.createEl('div', { cls: 'tc-barchart-axis' });
+        monthIsos.forEach((iso, idx) => {
+            const day = idx + 1;
+            const lab = axis.createEl('div', { cls: 'tc-bar-axislabel' });
+            if (day === 1 || day % 5 === 0) lab.setText(String(day));
+        });
+    }
+
+    renderHeatmapBlock(root, habit) {
+        const wrap = root.createEl('div', { cls: 'tc-heatblock' });
+        const hd = wrap.createEl('div', { cls: 'tc-cal-header' });
+        hd.createEl('div', { text: t('Рік'), cls: 'tc-hd-subhead' });
+        this.navGroup(hd, String(this.anchor.getFullYear()), dir => this.yearStep(dir));
+
+        const yy = this.anchor.getFullYear();
+        const from = new Date(yy, 0, 1), to = new Date(yy, 11, 31);
+        const base = habit.color || 'var(--interactive-accent)';
+        let max = habit.goal > 0 ? habit.goal : 1;
+        for (let d = new Date(from); d <= to; d = addDays(d, 1)) max = Math.max(max, this.val(toISO(d), habit));
+        const unit = habit.unit || (habit.type === 'bool' ? t('разів') : '');
+        const activeWeek = toISO(startOfWeek(this.anchor));
+
+        const cols = wrap.createEl('div', { cls: 'tc-heat tc-heat-year' });
+        let d = startOfWeek(from);
+        while (d <= to) {
+            const col = cols.createEl('div', { cls: 'tc-heat-col' });
+            if (toISO(d) === activeWeek) col.addClass('tc-heat-col-active');
+            for (let i = 0; i < 7; i++) {
+                const day = addDays(d, i);
+                const iso = toISO(day);
+                const dim = day < from || day > to;
+                const v = dim ? 0 : this.val(iso, habit);
+                const cell = col.createEl('div', { cls: dim ? 'tc-heat-cell tc-heat-dim' : 'tc-heat-cell' });
+                cell.style.background = heatColor(base, heatLevel(v, max));
+                cell.title = `${iso}: ${v}${unit ? ' ' + unit : ''}`;
+            }
+            d = addDays(d, 7);
+        }
     }
 }
 

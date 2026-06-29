@@ -76,7 +76,17 @@ class ConfirmModal extends obsidian.Modal {
 }
 
 function setCheckbox(line, done) {
-    return line.replace(/^(\s*)- \[(x| )\]/, done ? '$1- [x]' : '$1- [ ]');
+    return line.replace(/^(\s*)- \[(x| |-)\]/, done ? '$1- [x]' : '$1- [ ]');
+}
+
+// Set a task line's status mark: 'done' → [x], 'cancelled' → [-], 'todo' → [ ]
+function statusMark(status) { return status === 'done' ? 'x' : status === 'cancelled' ? '-' : ' '; }
+
+async function setTaskStatus(app, file, lineNum, status) {
+    const content = await app.vault.read(file);
+    const lines = content.split('\n');
+    lines[lineNum] = lines[lineNum].replace(/^(\s*)- \[(x| |-)\]/, `$1- [${statusMark(status)}]`);
+    await app.vault.modify(file, lines.join('\n'));
 }
 
 async function toggleTask(app, file, lineNum, done) {
@@ -99,8 +109,8 @@ async function toggleTaskCascade(app, file, task, done) {
 function syncParent(lines, parentLineNum) {
     let total = 0, done = 0;
     for (let i = parentLineNum + 1; i < lines.length; i++) {
-        const cb = lines[i].match(/^(\s+)- \[(x| )\] /);
-        if (cb) { total++; if (cb[2] === 'x') done++; continue; }
+        const cb = lines[i].match(/^(\s+)- \[(x| |-)\] /);
+        if (cb) { if (cb[2] === '-') continue; total++; if (cb[2] === 'x') done++; continue; }
         if (lines[i].trim() === '') continue;          // blank inside block
         if (/^\s+- /.test(lines[i])) continue;         // indented comment
         break;                                          // top-level content → end of children
@@ -153,7 +163,8 @@ async function rewriteTaskLine(app, file, lineNum, task) {
     const content = await app.vault.read(file);
     const lines = content.split('\n');
     const indent = (lines[lineNum].match(/^(\s*)/) || ['', ''])[1];
-    lines[lineNum] = `${indent}- [${task.done ? 'x' : ' '}] ${serializeTaskBody(task)}${taskMarkers(task)}`;
+    const mark = task.cancelled ? '-' : task.done ? 'x' : ' ';
+    lines[lineNum] = `${indent}- [${mark}] ${serializeTaskBody(task)}${taskMarkers(task)}`;
     await app.vault.modify(file, lines.join('\n'));
 }
 
@@ -264,9 +275,11 @@ async function insertBlockUnderHeading(app, file, blockLines, settings) {
         if (m && m[1].length === level && m[2].toLowerCase() === headingText.toLowerCase()) { idx = i; break; }
     }
 
+    let insertedAt;
     if (idx === -1) {
         if (lines.length && lines[lines.length - 1].trim() !== '') lines.push('');
         lines.push(headingLine, ...blockLines);
+        insertedAt = lines.length - blockLines.length;
     } else {
         let end = lines.length;
         for (let i = idx + 1; i < lines.length; i++) {
@@ -276,14 +289,16 @@ async function insertBlockUnderHeading(app, file, blockLines, settings) {
         // after the last top-level task in the section…
         let insertAt = idx + 1;
         for (let i = idx + 1; i < end; i++) {
-            if (/^\s*- \[(x| )\]/.test(lines[i]) && /^\S/.test(lines[i])) insertAt = i + 1;
+            if (/^\s*- \[(x| |-)\]/.test(lines[i]) && /^\S/.test(lines[i])) insertAt = i + 1;
         }
         // …and past that task's indented children
         while (insertAt < end && /^\s+- /.test(lines[insertAt])) insertAt++;
         lines.splice(insertAt, 0, ...blockLines);
+        insertedAt = insertAt;
     }
 
     await app.vault.modify(file, lines.join('\n'));
+    return insertedAt;
 }
 
 // Move a task (with its children) to another day's note, updating its time
@@ -298,12 +313,14 @@ async function moveTaskToDay(app, task, destISO, newStart, newEnd, settings) {
 
     const indent = (block[0].match(/^(\s*)/) || ['', ''])[1];
     const marker = taskMarkers(task);
+    const mark = task.cancelled ? '-' : task.done ? 'x' : ' ';
     const updated = { ...task, start: newStart, end: newEnd };
-    block[0] = `${indent}- [${task.done ? 'x' : ' '}] ${serializeTaskBody(updated)}${marker}`;
+    block[0] = `${indent}- [${mark}] ${serializeTaskBody(updated)}${marker}`;
 
     lines.splice(task.line, end - task.line);
     await app.vault.modify(srcFile, lines.join('\n'));
 
     const destFile = await getOrCreateDateFile(app, destISO);
-    await insertBlockUnderHeading(app, destFile, block, settings);
+    const line = await insertBlockUnderHeading(app, destFile, block, settings);
+    return { file: destFile, line };
 }

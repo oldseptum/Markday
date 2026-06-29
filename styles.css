@@ -1062,3 +1062,168 @@
     .tc-listview .tc-row { padding: 12px 4px; }
     .tc-listview .tc-group-title { font-size: var(--font-ui-large); }
 }
+
+/* ── Cancelled tasks ([-]) ─────────────────────────────────────────────────── */
+.tc-cancelled { opacity: 0.75; }
+.tc-cancelled .tc-label,
+.tc-cancelled .tc-tl-event-title { text-decoration: line-through; color: var(--text-muted); }
+.tc-bar-cancelled { opacity: 0.6; }
+.tc-bar-cancelled .tc-bar-text { text-decoration: line-through; }
+
+/* ── Current-time line on the timeline ─────────────────────────────────────── */
+.tc-tl-now { position: absolute; left: var(--tc-axis); right: 0; height: 0; border-top: 2px solid var(--color-red, #e5534b); z-index: 4; pointer-events: none; }
+.tc-tl-now::before { content: ''; position: absolute; left: -3px; top: -4px; width: 7px; height: 7px; border-radius: 50%; background: var(--color-red, #e5534b); }
+/* ── Create modal: smart description + quick-param row ──────────────────────── */
+.tc-smartdesc-input { width: 100%; }
+.tc-smartdesc-chips { margin-top: 6px; }
+.tc-smartdesc-chips.tc-empty { display: none; }
+.tc-quick-row { display: flex; gap: 6px; margin: 12px 0 4px; }
+.tc-quick-summary { font-size: var(--font-ui-smaller); color: var(--text-muted); min-height: 1.2em; margin-bottom: 6px; }
+.tc-quick-dates { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.tc-quick-dates button { flex: 1 1 auto; }
+.tc-rec-preview { font-size: var(--font-ui-smaller); color: var(--text-muted); margin-top: 8px; }
+
+/* inline #/@ autocomplete dropdown (anchored under the description) */
+.tc-suggest { position: fixed; z-index: 60; background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); box-shadow: var(--shadow-s); max-height: 220px; overflow-y: auto; padding: 4px; }
+.tc-suggest-item { padding: 4px 10px; border-radius: var(--radius-s); cursor: pointer; font-size: var(--font-ui-small); white-space: nowrap; }
+.tc-suggest-item.is-active, .tc-suggest-item:hover { background: var(--background-modifier-hover); }
+
+/* chips: × appears on hover (desktop); always shown on mobile */
+.tc-chip .tc-chip-x { display: none; margin-left: 3px; cursor: pointer; opacity: 0.7; }
+.tc-chip:hover .tc-chip-x { display: inline; }
+.is-mobile .tc-chip .tc-chip-x { display: inline; }
+
+/* ── Edit modal: adaptive two-column "book" layout ──────────────────────────── */
+.tc-editor { container-type: inline-size; }
+.modal:has(.tc-editor-main) { width: min(860px, 92vw); }
+.tc-editor-main { display: grid; grid-template-columns: 1fr; gap: 0 20px; }
+.tc-editor-desc-wrap { display: flex; }
+.tc-editor-desc-wrap .tc-editor-desc { width: 100%; }
+@container (min-width: 640px) {
+    .tc-editor-main { grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr); }
+    .tc-editor-side { grid-column: 1; grid-row: 1; }
+    .tc-editor-desc-wrap { grid-column: 2; grid-row: 1; }
+    .tc-editor-desc-wrap .tc-editor-desc { height: 100%; min-height: 340px; resize: none; }
+}
+/* ══ Habits dashboard (two-pane: list + detail) ════════════════════════════════ */
+.tc-habits-2pane { display: grid; grid-template-columns: minmax(300px, 500px) 1fr; gap: 24px; align-items: start; }
+.tc-habits-list, .tc-habits-detail { min-width: 0; }
+
+/* left: week ring-header + habit rows */
+.tc-hl-grid { display: grid; grid-template-columns: minmax(150px, 1fr) repeat(7, minmax(0, 1fr)); align-items: center; gap: 4px; }
+.tc-hl-weekhead { padding: 4px 0 8px; border-bottom: 1px solid var(--background-modifier-border); margin-bottom: 6px; }
+.tc-hl-dayhead { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: var(--font-ui-smaller); color: var(--text-muted); }
+.tc-hl-dayhead.tc-hl-today .tc-col-wd { color: var(--interactive-accent); font-weight: 600; }
+.tc-hl-row { padding: 8px 6px; border-radius: var(--radius-m); }
+.tc-hl-row.is-selected { background: var(--background-modifier-hover); box-shadow: inset 0 0 0 1px var(--background-modifier-border); }
+.tc-hl-info { display: flex; align-items: center; gap: 10px; cursor: pointer; min-width: 0; }
+.tc-hl-badge { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; background: var(--background-modifier-border); flex-shrink: 0; }
+.tc-hl-meta { min-width: 0; }
+.tc-hl-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tc-hl-streak { font-size: var(--font-ui-smaller); color: var(--text-muted); }
+.tc-hl-cell { display: flex; align-items: center; justify-content: center; }
+.tc-hl-cell.tc-clickable { cursor: pointer; }
+
+/* progress ring */
+.tc-ring-wrap { position: relative; display: inline-flex; align-items: center; justify-content: center; }
+.tc-ring { width: 100%; height: 100%; display: block; }
+.tc-ring-center { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 10px; color: var(--text-muted); pointer-events: none; }
+.tc-ring-full .tc-ring-center { color: var(--text-normal); font-weight: 600; }
+
+/* detail header */
+.tc-hd-head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+.tc-hd-title { display: flex; align-items: center; gap: 8px; font-size: var(--font-ui-large); font-weight: 700; flex: 1; min-width: 0; }
+.tc-hd-emoji { font-size: 1.3em; }
+.tc-hd-subhead { font-weight: 600; margin: 20px 0 8px; }
+
+/* metric cards */
+.tc-metric-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.tc-metric-card { background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); padding: 12px 14px; }
+.tc-metric-top { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.tc-metric-icon { display: inline-flex; }
+.tc-metric-icon .svg-icon { width: 15px; height: 15px; }
+.tc-metric-value { font-size: 1.5em; font-weight: 700; margin-top: 4px; line-height: 1.1; }
+.tc-metric-sub { font-size: var(--font-ui-smaller); color: var(--text-faint); }
+
+/* ring calendar */
+.tc-ring-cal { margin-top: 20px; }
+.tc-ringcal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; justify-items: center; }
+.tc-ringcal-grid .tc-wd { font-size: var(--font-ui-smaller); color: var(--text-faint); }
+.tc-ringcal-cell { display: flex; align-items: center; justify-content: center; padding: 2px; border-radius: 8px; }
+.tc-ringcal-cell.tc-clickable { cursor: pointer; }
+.tc-ringcal-cell.tc-today { box-shadow: inset 0 0 0 2px var(--interactive-accent); }
+.tc-ringcal-cell.tc-outside { opacity: 0.4; }
+
+/* daily-goals bar chart */
+.tc-barchart-wrap { margin-top: 20px; }
+.tc-barchart { position: relative; display: flex; align-items: flex-end; gap: 2px; height: 120px; padding-top: 4px; border-bottom: 1px solid var(--background-modifier-border); }
+.tc-bar-col { flex: 1; display: flex; align-items: flex-end; height: 100%; }
+.tc-bar-fill { width: 100%; min-height: 1px; background: var(--background-modifier-border); border-radius: 2px 2px 0 0; }
+.tc-bar-fill.tc-bar-done { background: var(--interactive-accent); }
+.tc-bar-goalline { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--text-faint); pointer-events: none; }
+
+/* habit log */
+.tc-habit-log { margin-top: 20px; }
+.tc-log-row { display: flex; justify-content: space-between; padding: 6px 2px; border-bottom: 1px solid var(--background-modifier-border); font-size: var(--font-ui-small); }
+.tc-log-val { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+.tc-heatblock { margin-top: 22px; }
+/* ══ Habits dashboard tweaks ═══════════════════════════════════════════════════ */
+/* unified period switcher label (click → today) */
+.tc-nav-group .tc-nav-label { background: transparent; border: none; box-shadow: none; padding: 4px 12px; font-weight: 600; cursor: pointer; color: var(--text-normal); font-variant-numeric: tabular-nums; }
+.tc-nav-group .tc-nav-label:hover { background: var(--background-modifier-hover); }
+
+/* bar chart: fast tooltip bubble + x-axis day labels + visible goal line */
+.tc-barchart { position: relative; }
+.tc-bar-tip { position: absolute; top: 0; transform: translate(-50%, -110%); background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 1px 7px; font-size: var(--font-ui-smaller); font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; z-index: 6; }
+.tc-barchart-axis { display: flex; gap: 2px; margin-top: 3px; }
+.tc-bar-axislabel { flex: 1; min-width: 0; text-align: center; font-size: 9px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.tc-bar-goalline { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--interactive-accent); pointer-events: none; z-index: 4; }
+.tc-bar-goallabel { position: absolute; right: 2px; top: -8px; font-size: 9px; color: var(--interactive-accent); background: var(--background-primary); padding: 0 3px; }
+
+/* year heatmap fits the pane width */
+.tc-heatblock .tc-heat-year { display: flex; gap: 3px; width: 100%; overflow: visible; }
+.tc-heatblock .tc-heat-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.tc-heatblock .tc-heat-year .tc-heat-cell { width: auto; height: auto; aspect-ratio: 1; border-radius: 3px; }
+.tc-heat-col-active { outline: 1.5px solid var(--interactive-accent); outline-offset: 1px; border-radius: 4px; }
+/* ══ Task editor — 4-layer card (live save) ════════════════════════════════════ */
+.modal:has(.tc-task-edit) { width: min(540px, 94vw); }
+.tc-task-edit .tc-te-l1 { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.tc-task-edit .tc-te-check { width: 20px; height: 20px; accent-color: var(--interactive-accent); flex-shrink: 0; }
+.tc-te-date { display: inline-flex; align-items: center; gap: 6px; background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: 999px; padding: 4px 12px; color: var(--text-normal); cursor: pointer; font-size: var(--font-ui-small); }
+.tc-te-date:hover { background: var(--background-modifier-hover); }
+.tc-te-date-ic { display: inline-flex; color: var(--interactive-accent); }
+.tc-te-date-ic .svg-icon { width: 15px; height: 15px; }
+.tc-te-prio { margin-left: auto; }
+.tc-te-prio.is-set { background: color-mix(in srgb, currentColor 16%, transparent); }
+.tc-te-title { font-size: 1.4em; font-weight: 700; margin: 2px 0 10px; }
+.tc-te-l3 { max-height: 48vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 2px; }
+.tc-te-l3 .tc-editor-desc { width: 100%; resize: vertical; }
+.tc-te-subs { display: flex; flex-direction: column; gap: 2px; }
+.tc-te-tags.tc-chips { border: none; padding: 0; gap: 6px; }
+.tc-te-tags.tc-chips:empty { display: none; }
+.tc-chip-add { cursor: pointer; background: transparent; border: 1px dashed var(--background-modifier-border); color: var(--text-muted); padding: 1px 9px; border-radius: 999px; }
+.tc-chip-add:hover { color: var(--interactive-accent); border-color: var(--interactive-accent); }
+.tc-te-l4 { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--background-modifier-border); }
+.tc-te-group { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 2px 10px; font-size: var(--font-ui-smaller); font-weight: 600; }
+.tc-te-group .tc-chip-x { cursor: pointer; margin-left: 2px; opacity: 0.75; }
+.tc-te-nogroup { color: var(--text-faint); font-size: var(--font-ui-smaller); }
+/* ══ Cancelled ✕ box (replaces the checkbox for [-] tasks) ══════════════════════ */
+.tc-xbox { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border: 1px solid var(--background-modifier-border); border-radius: 4px; color: var(--text-muted); font-size: 12px; line-height: 1; cursor: pointer; flex-shrink: 0; box-sizing: border-box; }
+.tc-xbox:hover { color: var(--text-normal); border-color: var(--text-muted); }
+.tc-xbox.tc-bar-cbx { width: 14px; height: 14px; font-size: 9px; }
+.tc-xbox.tc-tl-cb { width: 15px; height: 15px; font-size: 10px; }
+.tc-xbox.tc-te-check { width: 20px; height: 20px; font-size: 13px; }
+
+/* editor: close only via Esc (hide the × button) */
+.modal.tc-noclose .modal-close-button { display: none; }
+
+/* editor: large clickable group badge */
+.tc-te-group { display: inline-flex; align-items: center; gap: 6px; border: none; border-radius: 999px; padding: 5px 14px; font-size: var(--font-ui-small); font-weight: 600; cursor: pointer; }
+.tc-te-group.tc-te-nogroup { background: var(--background-secondary); color: var(--text-muted); }
+.tc-te-group.tc-te-nogroup:hover { background: var(--background-modifier-hover); }
+
+/* create modal: status / priority icons highlight when set */
+.tc-quick-row .clickable-icon.is-set { background: color-mix(in srgb, currentColor 16%, transparent); }
+/* habits dashboard: cap width and centre on very wide panes (no anomalous stretch) */
+.tc-habits-2pane { max-width: 1200px; margin: 0 auto; }

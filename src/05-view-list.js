@@ -34,12 +34,12 @@ class ListView extends obsidian.ItemView {
         let tasks = [];
         for (const { tasks: ts } of map.values()) tasks = tasks.concat(ts);
         tasks = tasks.filter(t => {
-            const overdue = t.date < todayStr && !t.done;
+            const overdue = t.date < todayStr && !t.done && !t.cancelled;
             if (overdue) return this.overdue;                 // overdue shown only when enabled
             if (t.date < todayStr) return this.range === 'all'; // past, done → only in "all"
             return !rangeEnd || t.date <= rangeEnd;             // today / future within range
         });
-        if (this.hideDone) tasks = tasks.filter(t => !t.done);
+        if (this.hideDone) tasks = tasks.filter(t => !t.done && !t.cancelled);
 
         // today's habit values (word-count needs async)
         const habits = this.showHabits ? habitList(settings) : [];
@@ -66,7 +66,7 @@ class ListView extends obsidian.ItemView {
         const refresh = () => this.refresh();
 
         // overdue tasks always form their own group (regardless of grouping)
-        const isOverdue = t => t.date < todayStr && !t.done;
+        const isOverdue = t => t.date < todayStr && !t.done && !t.cancelled;
         const overdueTasks = tasks.filter(isOverdue);
         const rest = overdueTasks.length ? tasks.filter(t => !isOverdue(t)) : tasks;
 
